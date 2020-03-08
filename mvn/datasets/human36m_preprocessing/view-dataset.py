@@ -34,7 +34,7 @@ dataset = Human36MMultiViewDataset(
     scale_bbox=1.0,
     kind='human36m',
     norm_image=False,
-    undistort_images=True,
+    undistort_images=False,
     ignore_cameras=[])
 print(len(dataset))
 

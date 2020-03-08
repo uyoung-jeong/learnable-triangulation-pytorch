@@ -29,6 +29,7 @@ from mvn.utils import img, multiview, op, vis, misc, cfg
 from mvn.datasets import human36m
 from mvn.datasets import utils as dataset_utils
 
+from tqdm import tqdm
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -230,6 +231,7 @@ def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_
                     total_loss += weight * loss
 
                 metric_dict['total_loss'].append(total_loss.item())
+                print('epoch: {}, {}: {}, volumetric_ce_loss: {}, total_loss: {}'.format(epoch, config.opt.criterion, metric_dict[f'{config.opt.criterion}'][-1], metric_dict['volumetric_ce_loss'][-1], total_loss.item()))
 
                 if is_train:
                     opt.zero_grad()
@@ -345,7 +347,8 @@ def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_
                 print("Failed to evaluate. Reason: ", e)
                 scalar_metric, full_metric = 0.0, {}
 
-            metric_dict['dataset_metric'].append(scalar_metric)
+            metric_dict['dataset_metric'].append(scalar_metric) # mean per pose relative error in human36m
+            print('epoch: {}, dataset_metric: {}'.format(epoch, scalar_metric))
 
             checkpoint_dir = os.path.join(experiment_dir, "checkpoints", "{:04}".format(epoch))
             os.makedirs(checkpoint_dir, exist_ok=True)
@@ -453,8 +456,10 @@ def main(args):
         model = DistributedDataParallel(model, device_ids=[device])
 
     if not args.eval:
+        print('training process')
         # train loop
         n_iters_total_train, n_iters_total_val = 0, 0
+        pbar = tqdm(total = config.opt.n_epochs, desc='training process')
         for epoch in range(config.opt.n_epochs):
             if train_sampler is not None:
                 train_sampler.set_epoch(epoch)
@@ -469,7 +474,10 @@ def main(args):
                 torch.save(model.state_dict(), os.path.join(checkpoint_dir, "weights.pth"))
 
             print(f"{n_iters_total_train} iters done.")
+            pbar.update(1)
+        pbar.close()
     else:
+        print('evaluation process')
         if args.eval_dataset == 'train':
             one_epoch(model, criterion, opt, config, train_dataloader, device, 0, n_iters_total=0, is_train=False, master=master, experiment_dir=experiment_dir, writer=writer)
         else:
