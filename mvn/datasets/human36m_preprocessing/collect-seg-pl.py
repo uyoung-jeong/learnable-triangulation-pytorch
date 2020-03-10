@@ -10,6 +10,9 @@ import os, sys
 import numpy as np
 import h5py
 
+import pickle
+from tqdm import tqdm
+
 dataset_root = sys.argv[1]
 data_path = os.path.join(dataset_root, "extracted")
 subjects = [x for x in os.listdir(data_path) if x.startswith('S')]
@@ -46,7 +49,7 @@ def load_seg_pls(data_path, subject, action, camera):
         return top, left, bottom, right
 
     def resize_mask(mask):
-        return cv2.resize(mask, (1000, 1000), interpolation=cv2.INTER_AREA)
+        return cv2.resize(mask, (384, 384), interpolation=cv2.INTER_AREA)
 
     try:
         try:
@@ -62,7 +65,7 @@ def load_seg_pls(data_path, subject, action, camera):
             '%s.%s.mat' % (corrected_action, camera))
 
         with h5py.File(seg_pls_path, 'r') as h5file:
-            retval = np.empty((len(h5file['Feat']), 1000,1000), dtype=np.int32)
+            retval = np.empty((len(h5file['Feat']), 384, 384), dtype=np.int32)
 
             for frame_idx, mask_reference in enumerate(h5file['Feat'][:,0]):
                 seg_pl_mask = np.array(h5file[mask_reference])
@@ -86,6 +89,7 @@ def add_result_to_retval(args):
     seg_pls, subject, action, camera = args
     seg_pls_retval[subject][action][camera] = seg_pls
 
+"""
 import multiprocessing
 num_processes = int(sys.argv[2])
 pool = multiprocessing.Pool(num_processes)
@@ -115,6 +119,66 @@ pool.join()
 # raise any exceptions from pool's processes
 for async_result in async_errors:
     async_result.get()
+"""
+
+# refined multiprocessing
+# m.p. for each camera to reduce memory size of each chunk
+import multiprocessing
+num_proc = int(sys.argv[2])
+pool = multiprocessing.Pool(num_proc)
+async_errors = []
+
+pbar = tqdm(total=len(subjects))
+for subject in subjects:
+    subject_path = os.path.join(dataset_root, 'processed', subject)
+    actions = os.listdir(subject_path)
+    try:
+        actions.remove('MySegmentsMat')
+    except ValueError:
+        pass
+
+    for action in actions:
+        cameras = '54138969', '55011271', '58860488', '60457274'
+
+        async_res = [pool.apply_async(
+                    load_seg_pls,
+                    args=(data_path, subject, action, camera),
+            callback=add_result_to_retval) for camera in cameras]
+
+        for r in async_res:
+            async_errors.append(r)
+            r = r.get()
+            add_result_to_retval(r)
+        
+    pbar.update(1)
+pbar.close()
+pool.close()
+pool.join()
+
+# raise any exceptions from pool's processes
+for async_result in async_errors:
+    async_result.get()
+"""
+# single processing to prevent memory issue in multiprocessing
+# serializing more than 4GiB results in error
+pbar = tqdm(total=len(subjects))
+for subject in subjects:
+    subject_path = os.path.join(dataset_root, 'processed', subject)
+    actions = os.listdir(subject_path)
+    try:
+        actions.remove('MySegmentsMat')
+    except ValueError:
+        pass
+
+    for action in actions:
+        cameras = '54138969', '55011271', '58860488', '60457274'
+
+        for camera in cameras:
+            res = load_seg_pls(data_path, subject, action, camera)
+            add_result_to_retval(res)
+    pbar.update(1)
+pbar.close()
+"""
 
 def freeze_defaultdict(x):
     x.default_factory = None
@@ -124,4 +188,9 @@ def freeze_defaultdict(x):
 
 # convert to normal dict
 freeze_defaultdict(seg_pls_retval)
-np.save(destination_file_path, seg_pls_retval)
+#np.save(destination_file_path, seg_pls_retval)
+dump_file = open(destination_file_path, 'wb')
+pickle.dump(seg_pls_retval, dump_file)
+dump_file.close()
+
+
