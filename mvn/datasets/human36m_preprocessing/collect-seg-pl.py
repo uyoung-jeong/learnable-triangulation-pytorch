@@ -1,196 +1,172 @@
 """
-    Read Segments_mat_gt_pl *.mat files from Human3.6M and convert them to a single *.npy file.
-    Example of an original segmentation part label file:
-    <path-to-Human3.6M-root>/S1/Segments_mat_gt_pl/Directions 1.54138969.mat
+    Read seg_pl *.mat files from Human3.6M and convert to *.jpg attention map files.
+    One attention map image is generated for each image made from process_all.py in human36m-fetch.
 
     Usage:
-    python3 collect-seg-pl.py <path-to-Human3.6M-root> <num-processes>
+    python collect-seg-pl.py <path-to-Human3.6M-root> <num-processes> 
 """
-import os, sys
-import numpy as np
-import h5py
 
-import pickle
+import os, sys
+from os.path import join
+import h5py
+import PIL
+import cv2
+import numpy as np
 from tqdm import tqdm
 
-dataset_root = sys.argv[1]
-data_path = os.path.join(dataset_root, "extracted")
-subjects = [x for x in os.listdir(data_path) if x.startswith('S')]
-assert len(subjects) == 7
-
-destination_dir = os.path.join(dataset_root, "extra")
-os.makedirs(destination_dir, exist_ok=True)
-destination_file_path = os.path.join(destination_dir, "seg_pl-Human36M-GT.npy")
-
-# Some bbox files do not exist, can be misaligned, damaged etc.
-# dict is not fully verified. There could be potential error
 from action_to_seg_pl_filename import action_to_seg_pl_filename
-from collections import defaultdict
 
-import cv2
+data_root = sys.argv[1]
+img_data_path = os.path.join(data_root, 'processed')
+subjects = [x for x in os.listdir(img_data_path) if x.startswith('S')]
+if len(subjects) < 1:
+    print("There is no subject to process.")
+    exit()
 
-nesteddict = lambda: defaultdict(nesteddict)
+img_actions = [x for x in os.listdir(join(img_data_path, subjects[0])) if x.find('-')!=-1]
+if len(img_actions) < 1:
+    print("There is no action to process.")
+    exit()
 
-seg_pls_retval = nesteddict()
+save_dir = join(data_root, "extra", "seg_pl")
+# prepare dirs
+print("Making directories in the destination path:")
+print(save_dir)
+os.makedirs(save_dir, exist_ok=True)
+for subj in subjects:
+    subj_path = join(save_dir, subj)
+    os.makedirs(subj_path, exist_ok=True)
 
-def load_seg_pls(data_path, subject, action, camera):
-    print(subject, action, camera)
+    # make dirs for each action
+    for act in img_actions:
+        act_path = join(subj_path, act)
+        os.makedirs(act_path, exist_ok=True)
 
-    def mask_to_seg_pl(mask):
-        h_mask = mask.max(0)
-        w_mask = mask.max(1)
 
-        top = h_mask.argmax()
-        bottom = len(h_mask) - h_mask[::-1].argmax()
-
-        left = w_mask.argmax()
-        right = len(w_mask) - w_mask[::-1].argmax()
-
-        return top, left, bottom, right
-
-    def resize_mask(mask):
-        return cv2.resize(mask, (384, 384), interpolation=cv2.INTER_AREA)
-
+# multiprocessing routine
+def routine(img_action_path, cam, subj, action, files, save_dir):
+    img_cam_path = os.path.join(img_action_path, cam)
+    img_files = []
     try:
-        try:
-            corrected_action = action_to_seg_pl_filename[subject][action]
-        except KeyError:
-            corrected_action = action.replace('-', ' ')
-
-        # TODO use pathlib
-        seg_pls_path = os.path.join(
-            data_path,
-            subject,
-            'Segments_mat_gt_pl',
-            '%s.%s.mat' % (corrected_action, camera))
-
-        with h5py.File(seg_pls_path, 'r') as h5file:
-            retval = np.empty((len(h5file['Feat']), 384, 384), dtype=np.int32)
-
-            for frame_idx, mask_reference in enumerate(h5file['Feat'][:,0]):
-                seg_pl_mask = np.array(h5file[mask_reference])
-                retval[frame_idx] = resize_mask(seg_pl_mask) #mask_to_seg_pl(seg_pl_mask)
-                
-                """ We don't have to calculate bbox in processing segmentation masks
-                top, left, bottom, right = retval[frame_idx]
-                if right-left < 2 or bottom-top < 2:
-                    print('right-left:{}, bottom-top:{}'.format(right-left, bottom-top))
-                    print('right: {}, left: {}, bottom: {}, top: {}'.format(right, left, bottom, top))
-                    raise Exception(str(seg_pls_path) + ' $ ' + str(frame_idx))
-                """
-    except Exception as ex:
-        # reraise with path information
-        raise Exception(str(ex) + '; %s %s %s' % (subject, action, camera))
+        img_files = [f for f in os.listdir(img_cam_path) if os.path.isfile(os.path.join(img_cam_path, f))]
+    except FileNotFoundError as e:
+        if (subj == 'S11') and (action == 'Directions-2') and (cam == '54138969'):
+            # print('this camera data is blacklisted by process_all.py')
+            return
+        print(e)
+    indices = np.arange(0, len(img_files), 400)
     
-    return retval, subject, action, camera
+    # select matching file
+    selected_f = ''
+    selected_a = action
+    try:
+        selected_a = action_to_seg_pl_filename[subj][action]
+    except KeyError:
+        selected_a = action.replace('-', ' ')
 
-# retval['S1']['Talking-1']['54534623'].shape = (n_frames, 4) # top, left, bottom, right
-def add_result_to_retval(args):
-    seg_pls, subject, action, camera = args
-    seg_pls_retval[subject][action][camera] = seg_pls
+    for f in files:
+        fname = f.split('/')[-1]
+        tokens = fname.split('.')
+        if (tokens[0] == selected_a) and (tokens[1] == cam) and (tokens[-1] == 'mat'):
+            selected_f = f
+            break
+    
+    if selected_f == '':
+        print('matching seg map for {} not found'.format(action))
+        return
 
-"""
-import multiprocessing
-num_processes = int(sys.argv[2])
-pool = multiprocessing.Pool(num_processes)
+    with h5py.File(selected_f, 'r') as mat:
+        for img_f in img_files:
+            # load image and save
+            img_f_path = os.path.join(img_cam_path, img_f)
+            img = cv2.imread(img_f_path)
+            img_fname = img_f.replace('img_', '{}_{}_'.format(selected_a, cam))
+            cv2.imwrite(join(save_dir, subj, img_fname), img)
+
+            # get index of file
+            img_index = img_f
+            img_index = int(img_index.replace('.jpg', '').replace('img_', ''))-1
+            
+            # load mask
+            mask_ref = None
+            try:
+                mask_ref = mat['Feat'][img_index, 0]
+            except ValueError as e:
+                print(e)
+                print('action:{}, camera:{}, img_idx:{}'.format(action, cam, img_index))
+                continue
+            mask = np.array(mat[mask_ref], dtype=np.float32)
+
+            # augment mask
+            augmented = np.rot90(mask, 3) # rotate 90 deg. clockwise
+            augmented = np.fliplr(augmented) # flip horizontally
+
+            # add mask to the img
+            alpha = simple_alpha(augmented)
+            alpha = cv2.GaussianBlur(alpha, (5,5),0) # gaussian smoothing
+            r,g,b = cv2.split(img)
+            r = r*alpha
+            g = g*alpha
+            b = b*alpha
+            rgba = cv2.merge((r,g,b))
+
+            # save
+            #cv2.imwrite(join(save_dir, subj, '{}_{}_{}_raw.jpg'.format(selected_a, cam, img_index)), mask)
+            cv2.imwrite(join(save_dir, subj, '{}_{}_{}_aug.jpg'.format(selected_a, cam, img_index)), augmented)
+            cv2.imwrite(join(save_dir, subj, '{}_{}_{}_alpha.jpg'.format(selected_a, cam, img_index)), rgba)
+
+# simple function for making alpha channel
+def simple_alpha(x):
+    y = np.copy(x)
+    nonzero_indices = np.nonzero(y)
+    y[nonzero_indices] = 1
+    return y
+
+import multiprocessing as mp
+n_proc = int(sys.argv[2])
+max_proc = mp.cpu_count()
+actual_proc = np.amin([max_proc, n_proc])
+pool = mp.Pool(actual_proc)
+print("Multiprocessing with {} threads".format(actual_proc))
 async_errors = []
 
-for subject in subjects:
-    subject_path = os.path.join(dataset_root, 'processed', subject)
-    actions = os.listdir(subject_path)
-    try:
-        actions.remove('MySegmentsMat') # folder with seg_pl *.mat files
-    except ValueError:
-        pass
+seg_base_path = os.path.join(data_root, 'extracted')
+subdir = 'Segments_mat_gt_pl'
 
+cameras = ['54138969', '55011271', '58860488', '60457274']
+
+# iterate over subjects
+for subj in subjects:
+    subj_path = join(seg_base_path, subj, subdir) # seg subj path
+    img_subj_path = join(img_data_path, subj) # img subj path
+
+    # get .mat files in the specified subject
+    files = []
+    for r,d,f in os.walk(subj_path):
+        for file in f:
+            if '.mat' in file:
+                files.append(os.path.join(r, file))
+
+    actions = [o for o in os.listdir(img_subj_path) if (os.path.isdir(join(img_subj_path, o)) and o.find('MySegmentsMat') == -1)]
+    
+    pbar = tqdm(total=len(actions), desc=subj)
     for action in actions:
-        cameras = '54138969', '55011271', '58860488', '60457274'
-
-        for camera in cameras:
-            async_result = pool.apply_async(
-                load_seg_pls,
-                args=(data_path, subject, action, camera),
-                callback=add_result_to_retval)
-            async_errors.append(async_result)
-
-pool.close()
-pool.join()
-
-# raise any exceptions from pool's processes
-for async_result in async_errors:
-    async_result.get()
-"""
-
-# refined multiprocessing
-# m.p. for each camera to reduce memory size of each chunk
-import multiprocessing
-num_proc = int(sys.argv[2])
-pool = multiprocessing.Pool(num_proc)
-async_errors = []
-
-pbar = tqdm(total=len(subjects))
-for subject in subjects:
-    subject_path = os.path.join(dataset_root, 'processed', subject)
-    actions = os.listdir(subject_path)
-    try:
-        actions.remove('MySegmentsMat')
-    except ValueError:
-        pass
-
-    for action in actions:
-        cameras = '54138969', '55011271', '58860488', '60457274'
-
+        img_action_path = join(img_subj_path, action, 'imageSequence-undistorted')
+        # multiprocessing
         async_res = [pool.apply_async(
-                    load_seg_pls,
-                    args=(data_path, subject, action, camera),
-            callback=add_result_to_retval) for camera in cameras]
-
-        for r in async_res:
-            async_errors.append(r)
-            r = r.get()
-            add_result_to_retval(r)
-        
-    pbar.update(1)
-pbar.close()
+                        routine,
+                        args=(img_action_path, cam, subj, action, files, save_dir)
+                        )for cam in cameras]
+        for res in async_res:
+            res.get()
+        pbar.update(1)
+        """
+        for cam in cameras:
+            routine(img_action_path, cam, subj, action, files, save_dir) 
+            pbar.update(1)
+        """
+    pbar.close()
 pool.close()
 pool.join()
 
-# raise any exceptions from pool's processes
-for async_result in async_errors:
-    async_result.get()
-"""
-# single processing to prevent memory issue in multiprocessing
-# serializing more than 4GiB results in error
-pbar = tqdm(total=len(subjects))
-for subject in subjects:
-    subject_path = os.path.join(dataset_root, 'processed', subject)
-    actions = os.listdir(subject_path)
-    try:
-        actions.remove('MySegmentsMat')
-    except ValueError:
-        pass
-
-    for action in actions:
-        cameras = '54138969', '55011271', '58860488', '60457274'
-
-        for camera in cameras:
-            res = load_seg_pls(data_path, subject, action, camera)
-            add_result_to_retval(res)
-    pbar.update(1)
-pbar.close()
-"""
-
-def freeze_defaultdict(x):
-    x.default_factory = None
-    for value in x.values():
-        if type(value) is defaultdict:
-            freeze_defaultdict(value)
-
-# convert to normal dict
-freeze_defaultdict(seg_pls_retval)
-#np.save(destination_file_path, seg_pls_retval)
-dump_file = open(destination_file_path, 'wb')
-pickle.dump(seg_pls_retval, dump_file)
-dump_file.close()
-
-
+print('Finished Execution')
