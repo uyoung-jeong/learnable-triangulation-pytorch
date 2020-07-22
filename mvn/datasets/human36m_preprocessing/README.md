@@ -35,8 +35,11 @@ Here is how we do it (brace yourselves):
     ```bash
     mkdir -p $THIS_REPOSITORY/data/human36m/extra/una-dinosauria-data
     cd $THIS_REPOSITORY/data/human36m/extra/una-dinosauria-data
-    wget https://www.dropbox.com/s/e35qv3n6zlkouki/h36m.zip
-    unzip h36m.zip && rm h36m.zip
+    ```
+    
+    Download `h36m.zip` from [Google Drive](https://drive.google.com/file/d/1PIqzOfdIYUVJudV5f22JpbAqDCTNMU8E/view?usp=sharing) and uzip it to current directory:
+    ```bash
+    unzip h36m.zip
     cd -
     ```
 
@@ -69,7 +72,7 @@ Here is how we do it (brace yourselves):
 7. Optionally, you can test if everything went well by viewing frames with skeletons and bounding boxes on a GUI machine:
 
     ```bash
-    python3 view-dataset.py $THIS_REPOSITORY/data/human36m $THIS_REPOSITORY/data/human36m/extra/human36m-multiview-labels-GTbboxes.npy [<start-sample-number> [<samples-per-step>]]`
+    python3 view-dataset.py $THIS_REPOSITORY/data/human36m/processed $THIS_REPOSITORY/data/human36m/extra/human36m-multiview-labels-GTbboxes.npy [<start-sample-number> [<samples-per-step>]]`
     ```
 
     You can test different settings by changing dataset constructor parameters in `view-dataset.py`.
