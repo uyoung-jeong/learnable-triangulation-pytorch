@@ -12,6 +12,7 @@ from mvn.utils.multiview import Camera
 from mvn.utils.img import get_square_bbox, resize_image, crop_image, normalize_image, scale_bbox
 from mvn.utils import volumetric
 
+import ipdb
 
 class Human36MMultiViewDataset(Dataset):
     """
@@ -115,57 +116,69 @@ class Human36MMultiViewDataset(Dataset):
 
     def __getitem__(self, idx):
         sample = defaultdict(list) # return value
+
         shot = self.labels['table'][idx]
 
         subject = self.labels['subject_names'][shot['subject_idx']]
         action = self.labels['action_names'][shot['action_idx']]
         frame_idx = shot['frame_idx']
+        
+        try:
+            camera_idx = shot['camera_idx']
+        except ValueError as e:
+            print(e)
+            print(f'idx:{idx}, subject:{subject}, action:{action}, frame_idx:{frame_idx}')
+            print('This error is probably occured by using multiview version of labels .npy file')
+            exit()
 
-        for camera_idx, camera_name in enumerate(self.labels['camera_names']):
-            if camera_idx in self.ignore_cameras:
-                continue
+        camera_idx = shot['camera_idx']
+        camera_name = self.labels['camera_names'][camera_idx]
 
-            # load bounding box
-            bbox = shot['bbox_by_camera_tlbr'][camera_idx][[1,0,3,2]] # TLBR to LTRB
-            bbox_height = bbox[2] - bbox[0]
-            if bbox_height == 0:
-                # convention: if the bbox is empty, then this view is missing
-                continue
+        if camera_idx in self.ignore_cameras:
+            return None
 
-            # scale the bounding box
-            bbox = scale_bbox(bbox, self.scale_bbox)
+        # load bounding box
+        bbox = shot['bbox_by_camera_tlbr'][camera_idx][[1,0,3,2]] # TLBR to LTRB
+        bbox_height = bbox[2] - bbox[0]
+        if bbox_height == 0:
+            # convention: if the bbox is empty, then this view is missing
+            return None
 
-            # load image
-            image_path = os.path.join(
-                self.h36m_root, subject, action, 'imageSequence' + '-undistorted' * self.undistort_images,
-                camera_name, 'img_%06d.jpg' % (frame_idx+1))
-            assert os.path.isfile(image_path), '%s doesn\'t exist' % image_path
-            image = cv2.imread(image_path)
+        # scale the bounding box
+        bbox = scale_bbox(bbox, self.scale_bbox)
 
-            # load camera
-            shot_camera = self.labels['cameras'][shot['subject_idx'], camera_idx]
-            retval_camera = Camera(shot_camera['R'], shot_camera['t'], shot_camera['K'], shot_camera['dist'], camera_name)
+        # load image
+        image_path = os.path.join(
+            self.h36m_root, subject, action, 'imageSequence' + '-undistorted' * self.undistort_images,
+            camera_name, 'img_%06d.jpg' % (frame_idx+1))
+        assert os.path.isfile(image_path), '%s doesn\'t exist' % image_path
+        image = cv2.imread(image_path)
+        
+        # load camera
+        shot_camera = self.labels['cameras'][shot['subject_idx'], camera_idx]
+        retval_camera = Camera(shot_camera['R'], shot_camera['t'], shot_camera['K'], shot_camera['dist'], camera_name)
 
-            if self.crop:
-                # crop image
-                image = crop_image(image, bbox)
-                retval_camera.update_after_crop(bbox)
+        if self.crop:
+            # crop image
+            image = crop_image(image, bbox)
+            retval_camera.update_after_crop(bbox)
 
-            if self.image_shape is not None:
-                # resize
-                image_shape_before_resize = image.shape[:2]
-                image = resize_image(image, self.image_shape)
-                retval_camera.update_after_resize(image_shape_before_resize, self.image_shape)
+        if self.image_shape is not None:
+            # resize
+            image_shape_before_resize = image.shape[:2]
+            image = resize_image(image, self.image_shape)
+            retval_camera.update_after_resize(image_shape_before_resize, self.image_shape)
 
-                sample['image_shapes_before_resize'].append(image_shape_before_resize)
+            sample['image_shapes_before_resize'].append(image_shape_before_resize)
 
-            if self.norm_image:
-                image = normalize_image(image)
+        if self.norm_image:
+            image = normalize_image(image)
 
-            sample['images'].append(image)
-            sample['detections'].append(bbox + (1.0,)) # TODO add real confidences
-            sample['cameras'].append(retval_camera)
-            sample['proj_matrices'].append(retval_camera.projection)
+        sample['images'].append(image)
+        sample['detections'].append(bbox + (1.0,)) # TODO add real confidences
+        sample['cameras'].append(retval_camera)
+        sample['proj_matrices'].append(retval_camera.projection)
+
 
         # 3D keypoints
         # add dummy confidences

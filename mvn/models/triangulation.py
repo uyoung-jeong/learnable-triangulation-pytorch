@@ -13,6 +13,7 @@ from mvn.utils import op, multiview, img, misc, volumetric
 from mvn.models import pose_resnet
 from mvn.models.v2v import V2VModel
 
+import ipdb
 
 class RANSACTriangulationNet(nn.Module):
     def __init__(self, config, device='cuda:0'):
@@ -204,8 +205,8 @@ class VolumetricTriangulationNet(nn.Module):
     def __init__(self, config, device='cuda:0'):
         super().__init__()
 
-        self.num_joints = config.model.backbone.num_joints
-        self.volume_aggregation_method = config.model.volume_aggregation_method
+        self.num_joints = config.model.backbone.num_joints # 17
+        self.volume_aggregation_method = config.model.volume_aggregation_method # softmax
 
         # volume
         self.volume_softmax = config.model.volume_softmax
@@ -214,12 +215,12 @@ class VolumetricTriangulationNet(nn.Module):
 
         self.cuboid_side = config.model.cuboid_side
 
-        self.kind = config.model.kind
-        self.use_gt_pelvis = config.model.use_gt_pelvis
+        self.kind = config.model.kind # mpii
+        self.use_gt_pelvis = config.model.use_gt_pelvis # False
 
         # heatmap
-        self.heatmap_softmax = config.model.heatmap_softmax
-        self.heatmap_multiplier = config.model.heatmap_multiplier
+        self.heatmap_softmax = config.model.heatmap_softmax # True
+        self.heatmap_multiplier = config.model.heatmap_multiplier # 100.0
 
         # transfer
         self.transfer_cmu_to_human36m = config.model.transfer_cmu_to_human36m if hasattr(config.model, "transfer_cmu_to_human36m") else False
@@ -252,6 +253,9 @@ class VolumetricTriangulationNet(nn.Module):
         # forward backbone
         heatmaps, features, _, vol_confidences = self.backbone(images)
 
+        #print(f"images.shape:{images.shape}") # [20, 3, 384, 384]
+        #print(f"heatmaps.shape:{heatmaps.shape}") # [20, 17, 96, 96]
+
         # reshape back
         images = images.view(batch_size, n_views, *images.shape[1:])
         heatmaps = heatmaps.view(batch_size, n_views, *heatmaps.shape[1:])
@@ -282,11 +286,14 @@ class VolumetricTriangulationNet(nn.Module):
         base_points = torch.zeros(batch_size, 3, device=device)
         coord_volumes = torch.zeros(batch_size, self.volume_size, self.volume_size, self.volume_size, 3, device=device)
         for batch_i in range(batch_size):
+            keypoints_3d = batch['keypoints_3d'][batch_i] # directly use gt pelvis
+            """
             # if self.use_precalculated_pelvis:
             if self.use_gt_pelvis:
                 keypoints_3d = batch['keypoints_3d'][batch_i]
             else:
                 keypoints_3d = batch['pred_keypoints_3d'][batch_i]
+            """
 
             if self.kind == "coco":
                 base_point = (keypoints_3d[11, :3] + keypoints_3d[12, :3]) / 2

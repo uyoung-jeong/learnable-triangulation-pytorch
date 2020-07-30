@@ -31,6 +31,8 @@ from mvn.datasets import utils as dataset_utils
 
 from tqdm import tqdm
 
+import ipdb
+
 def parse_args():
     parser = argparse.ArgumentParser()
 
@@ -76,7 +78,7 @@ def setup_human36m_dataloaders(config, is_train, distributed_train):
             collate_fn=dataset_utils.make_collate_fn(randomize_n_views=config.dataset.train.randomize_n_views,
                                                      min_n_views=config.dataset.train.min_n_views,
                                                      max_n_views=config.dataset.train.max_n_views),
-            num_workers=config.dataset.train.num_workers,
+            num_workers=int(config.dataset.train.num_workers),
             worker_init_fn=dataset_utils.worker_init_fn,
             pin_memory=True
         )
@@ -105,7 +107,7 @@ def setup_human36m_dataloaders(config, is_train, distributed_train):
         collate_fn=dataset_utils.make_collate_fn(randomize_n_views=config.dataset.val.randomize_n_views,
                                                  min_n_views=config.dataset.val.min_n_views,
                                                  max_n_views=config.dataset.val.max_n_views),
-        num_workers=config.dataset.val.num_workers,
+        num_workers=int(config.dataset.val.num_workers),
         worker_init_fn=dataset_utils.worker_init_fn,
         pin_memory=True
     )
@@ -132,7 +134,7 @@ def setup_experiment(config, model_name, is_train=True):
 
     experiment_title = prefix + experiment_title
 
-    experiment_name = '{}@{}'.format(experiment_title, datetime.now().strftime("%d.%m.%Y-%H:%M:%S"))
+    experiment_name = '{}_{}_{}'.format(experiment_title, config.model.backbone.name, datetime.now().strftime("%y-%d-%m_%H-%M"))
     print("Experiment name: {}".format(experiment_name))
 
     experiment_dir = os.path.join(args.logdir, experiment_name)
@@ -152,7 +154,7 @@ def setup_experiment(config, model_name, is_train=True):
     return experiment_dir, writer
 
 
-def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_total=0, is_train=True, caption='', master=False, experiment_dir=None, writer=None):
+def one_epoch(model, criterion, opt, config, args, dataloader, device, epoch, n_iters_total=0, is_train=True, caption='', master=False, experiment_dir=None, writer=None, best_metric=999.9):
     name = "train" if is_train else "val"
     model_type = config.model.name
 
@@ -169,10 +171,13 @@ def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_
     grad_context = torch.autograd.enable_grad if is_train else torch.no_grad
     with grad_context():
         end = time.time()
-
         iterator = enumerate(dataloader)
         if is_train and config.opt.n_iters_per_epoch is not None:
             iterator = islice(iterator, config.opt.n_iters_per_epoch)
+        
+        pbar = None
+        if master:
+            pbar = tqdm(total=len(dataloader), desc='epoch:{}/{}'.format(epoch, name))
 
         for iter_i, batch in iterator:
             with autograd.detect_anomaly():
@@ -181,6 +186,11 @@ def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_
 
                 if batch is None:
                     print("Found None batch")
+                    continue
+
+                if None in batch:
+                    print("Found None item in batch")
+                    ipdb.set_trace()
                     continue
 
                 images_batch, keypoints_3d_gt, keypoints_3d_validity_gt, proj_matricies_batch = dataset_utils.prepare_batch(batch, device, config)
@@ -192,19 +202,27 @@ def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_
                     keypoints_3d_pred, heatmaps_pred, volumes_pred, confidences_pred, cuboids_pred, coord_volumes_pred, base_points_pred = model(images_batch, proj_matricies_batch, batch)
 
                 batch_size, n_views, image_shape = images_batch.shape[0], images_batch.shape[1], tuple(images_batch.shape[3:])
-                n_joints = keypoints_3d_pred[0].shape[1]
+                
+                #print(f"keypoints_3d_pred.shape:{keypoints_3d_pred.shape}") # [20, 17, 3]
+                #print(f"heatmaps_pred.shape:{heatmaps_pred.shape}") # [20, 1, 32, 96, 96]
+                #print(f"volumes_pred.shape:{volumes_pred.shape}") # [20, 17, 64, 64, 64]
+
+                n_joints = keypoints_3d_pred.shape[1]
 
                 keypoints_3d_binary_validity_gt = (keypoints_3d_validity_gt > 0.0).type(torch.float32)
 
                 scale_keypoints_3d = config.opt.scale_keypoints_3d if hasattr(config.opt, "scale_keypoints_3d") else 1.0
 
                 # 1-view case
-                if n_views == 1:
+                """
+                if n_views == 1: 
                     if config.kind == "human36m":
                         base_joint = 6
                     elif config.kind == "coco":
                         base_joint = 11
 
+                    # subtract all joints except the base joint by the base joint coordinate
+                    # this results in wrong visualization result
                     keypoints_3d_gt_transformed = keypoints_3d_gt.clone()
                     keypoints_3d_gt_transformed[:, torch.arange(n_joints) != base_joint] -= keypoints_3d_gt_transformed[:, base_joint:base_joint + 1]
                     keypoints_3d_gt = keypoints_3d_gt_transformed
@@ -212,6 +230,7 @@ def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_
                     keypoints_3d_pred_transformed = keypoints_3d_pred.clone()
                     keypoints_3d_pred_transformed[:, torch.arange(n_joints) != base_joint] -= keypoints_3d_pred_transformed[:, base_joint:base_joint + 1]
                     keypoints_3d_pred = keypoints_3d_pred_transformed
+                """
 
                 # calculate loss
                 total_loss = 0.0
@@ -231,7 +250,9 @@ def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_
                     total_loss += weight * loss
 
                 metric_dict['total_loss'].append(total_loss.item())
-                print('epoch: {}, {}: {}, volumetric_ce_loss: {}, total_loss: {}'.format(epoch, config.opt.criterion, metric_dict[f'{config.opt.criterion}'][-1], metric_dict['volumetric_ce_loss'][-1], total_loss.item()))
+
+                if n_iters_total % config.vis_freq == 0:
+                    print('epoch:{}, iter_i:{}, {}: {}, volumetric_ce_loss: {}, total_loss: {}'.format(epoch, iter_i, config.opt.criterion, metric_dict[f'{config.opt.criterion}'][-1], metric_dict['volumetric_ce_loss'][-1], total_loss.item()))
 
                 if is_train:
                     opt.zero_grad()
@@ -334,8 +355,13 @@ def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_
                     writer.add_scalar(f"{name}/n_views", n_views, n_iters_total)
 
                     n_iters_total += 1
+            if master:
+                pbar.update(1)
+        if master:
+            pbar.close()
 
     # calculate evaluation metrics
+    comparative_metric = 999.9
     if master:
         if not is_train:
             results['keypoints_3d'] = np.concatenate(results['keypoints_3d'], axis=0)
@@ -350,22 +376,25 @@ def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_
             metric_dict['dataset_metric'].append(scalar_metric) # mean per pose relative error in human36m
             print('epoch: {}, dataset_metric: {}'.format(epoch, scalar_metric))
 
-            checkpoint_dir = os.path.join(experiment_dir, "checkpoints", "{:04}".format(epoch))
-            os.makedirs(checkpoint_dir, exist_ok=True)
+            # save the best results
+            comparative_metric = scalar_metric if scalar_metric != 0.0 else comparative_metric
+            if comparative_metric < best_metric:
+                checkpoint_dir = os.path.join(experiment_dir, "checkpoints", "{:04}".format(epoch))
+                os.makedirs(checkpoint_dir, exist_ok=True)
 
-            # dump results
-            with open(os.path.join(checkpoint_dir, "results.pkl"), 'wb') as fout:
-                pickle.dump(results, fout)
+                # dump results
+                with open(os.path.join(checkpoint_dir, "results.pkl"), 'wb') as fout:
+                    pickle.dump(results, fout)
 
-            # dump full metric
-            with open(os.path.join(checkpoint_dir, "metric.json".format(epoch)), 'w') as fout:
-                json.dump(full_metric, fout, indent=4, sort_keys=True)
+                # dump full metric
+                with open(os.path.join(checkpoint_dir, "metric.json".format(epoch)), 'w') as fout:
+                    json.dump(full_metric, fout, indent=4, sort_keys=True)
 
         # dump to tensorboard per-epoch stats
         for title, value in metric_dict.items():
             writer.add_scalar(f"{name}/{title}_epoch", np.mean(value), epoch)
 
-    return n_iters_total
+    return n_iters_total, comparative_metric
 
 
 def init_distributed(args):
@@ -405,7 +434,7 @@ def main(args):
         "alg": AlgebraicTriangulationNet,
         "vol": VolumetricTriangulationNet
     }[config.model.name](config, device=device).to(device)
-
+    
     if config.model.init_weights:
         state_dict = torch.load(config.model.checkpoint)
         for key in list(state_dict.keys()):
@@ -441,7 +470,6 @@ def main(args):
         else:
             opt = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=config.opt.lr)
 
-
     # datasets
     print("Loading data...")
     train_dataloader, val_dataloader, train_sampler = setup_dataloaders(config, distributed_train=is_distributed)
@@ -459,29 +487,43 @@ def main(args):
         print('training process')
         # train loop
         n_iters_total_train, n_iters_total_val = 0, 0
-        pbar = tqdm(total = config.opt.n_epochs, desc='training process')
+        best_metric = 999.9
+        best_epoch = 0
+        #pbar = tqdm(total = config.opt.n_epochs, desc='training process')
         for epoch in range(config.opt.n_epochs):
+            
             if train_sampler is not None:
                 train_sampler.set_epoch(epoch)
 
-            n_iters_total_train = one_epoch(model, criterion, opt, config, train_dataloader, device, epoch, n_iters_total=n_iters_total_train, is_train=True, master=master, experiment_dir=experiment_dir, writer=writer)
-            n_iters_total_val = one_epoch(model, criterion, opt, config, val_dataloader, device, epoch, n_iters_total=n_iters_total_val, is_train=False, master=master, experiment_dir=experiment_dir, writer=writer)
+            n_iters_total_train, _ = one_epoch(model, criterion, opt, config, args, train_dataloader, device, epoch, n_iters_total=n_iters_total_train, is_train=True, master=master, experiment_dir=experiment_dir, writer=writer, best_metric=best_metric)
+            n_iters_total_val, scalar_metric = one_epoch(model, criterion, opt, config, args, val_dataloader, device, epoch, n_iters_total=n_iters_total_val, is_train=False, master=master, experiment_dir=experiment_dir, writer=writer, best_metric=best_metric)
 
-            if master:
+            # save only the best case
+            if master and scalar_metric < best_metric:
+                best_metric = scalar_metric
+                best_epoch = epoch
+                # remove previous checkpoints
+                checkpoints = os.listdir(os.path.join(experiment_dir, "checkpoints"))
+                for checkpoint in checkpoints:
+                    if checkpoint != '{:04}'.format(epoch):
+                        shutil.rmtree(os.path.join(experiment_dir, "checkpoints", checkpoint))
+
+                # save new checkpoint
                 checkpoint_dir = os.path.join(experiment_dir, "checkpoints", "{:04}".format(epoch))
                 os.makedirs(checkpoint_dir, exist_ok=True)
 
                 torch.save(model.state_dict(), os.path.join(checkpoint_dir, "weights.pth"))
+                print(f"best case saved at {epoch}th epoch. scalar_metric:{scalar_metric}")
 
             print(f"{n_iters_total_train} iters done.")
-            pbar.update(1)
-        pbar.close()
+            #pbar.update(1)
+        #pbar.close()
     else:
         print('evaluation process')
         if args.eval_dataset == 'train':
-            one_epoch(model, criterion, opt, config, train_dataloader, device, 0, n_iters_total=0, is_train=False, master=master, experiment_dir=experiment_dir, writer=writer)
+            one_epoch(model, criterion, opt, config, args, train_dataloader, device, 0, n_iters_total=0, is_train=False, master=master, experiment_dir=experiment_dir, writer=writer)
         else:
-            one_epoch(model, criterion, opt, config, val_dataloader, device, 0, n_iters_total=0, is_train=False, master=master, experiment_dir=experiment_dir, writer=writer)
+            one_epoch(model, criterion, opt, config, args, val_dataloader, device, 0, n_iters_total=0, is_train=False, master=master, experiment_dir=experiment_dir, writer=writer)
 
     print("Done.")
 

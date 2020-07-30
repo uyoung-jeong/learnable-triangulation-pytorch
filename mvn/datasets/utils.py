@@ -63,3 +63,4 @@ def prepare_batch(batch, device, config, is_train=True):
     proj_matricies_batch = proj_matricies_batch.float().to(device)
 
     return images_batch, keypoints_3d_batch_gt, keypoints_3d_validity_batch_gt, proj_matricies_batch
+
