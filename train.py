@@ -251,8 +251,9 @@ def one_epoch(model, criterion, opt, config, args, dataloader, device, epoch, n_
 
                 metric_dict['total_loss'].append(total_loss.item())
 
-                if n_iters_total % config.vis_freq == 0:
-                    print('epoch:{}, iter_i:{}, {}: {}, volumetric_ce_loss: {}, total_loss: {}'.format(epoch, iter_i, config.opt.criterion, metric_dict[f'{config.opt.criterion}'][-1], metric_dict['volumetric_ce_loss'][-1], total_loss.item()))
+                if iter_i % config.vis_freq == 0:
+                    rank_ctxt = 'master' if master else 'low'
+                    print('{}/epoch:{}, iter_i:{}, {}: {}, volumetric_ce_loss: {}, total_loss: {}'.format(rank_ctxt, epoch, iter_i, config.opt.criterion, metric_dict[f'{config.opt.criterion}'][-1], metric_dict['volumetric_ce_loss'][-1], total_loss.item()))
 
                 if is_train:
                     opt.zero_grad()

@@ -14,8 +14,8 @@ opt:
   n_objects_per_epoch: 15000
   n_epochs: 100
 
-  batch_size: 20
-  val_batch_size: 40
+  batch_size: 10
+  val_batch_size: 20
 
   lr: 0.0001
   process_features_lr: 0.001
@@ -69,7 +69,7 @@ dataset:
     randomize_n_views: false
     min_n_views: null
     max_n_views: null
-    num_workers: 0 #5
+    num_workers: 5 #5
 
   val:
     h36m_root: "./data/human36m/processed/"
@@ -85,6 +85,6 @@ dataset:
     randomize_n_views: false
     min_n_views: null
     max_n_views: null
-    num_workers: 0 #10
+    num_workers: 10 #10
 
     retain_every_n_frames_in_test: 1
