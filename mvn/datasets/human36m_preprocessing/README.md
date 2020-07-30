@@ -1,5 +1,12 @@
 Human3.6M preprocessing scripts
 =======
+In `monocular` branch, `generate-labels-npy-monocular.py` is added for label preprocessing under monocular setting.
+While `generate-labels-npy-multiview.py` generates one 3d keypoint label for 4 images(4 views) under same frame, our new monocular script processes each image(each view) as one training sample.
+Overall preprocessing steps are still the same, but you need to run `generate-labels-npy-monocular.py` in the step 5.
+
+Below texts are the same as the original repo.
+
+
 
 These scripts help preprocess Human3.6M dataset so that it can be used with `class Human36MMultiViewDataset`.
 

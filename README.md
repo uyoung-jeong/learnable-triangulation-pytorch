@@ -1,7 +1,8 @@
 # Monocular 3D Human Pose Estimation
 This repo targets monocular 3D human pose estimation, without any multi-view or temporal information.
-
-
+Note that this repo modified several reprocessing, model and training files, so multi-view setting is not runnable.
+If you want to run the model with monocular setting, please checkout to monocular branch.
+Below descriptions are the same as the original repo.
 
 
 [![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/190505754/3d-human-pose-estimation-on-human36m)](https://paperswithcode.com/sota/3d-human-pose-estimation-on-human36m?p=190505754)
