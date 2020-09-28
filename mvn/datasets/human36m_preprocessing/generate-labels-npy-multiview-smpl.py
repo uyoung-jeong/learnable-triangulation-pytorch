@@ -222,3 +222,4 @@ assert retval['table'].ndim == 1
 
 print("Total frames in Human3.6Million:", len(retval['table']))
 np.save(destination_file_path, retval)
+
