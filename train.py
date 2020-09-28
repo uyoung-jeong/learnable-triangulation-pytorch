@@ -132,7 +132,7 @@ def setup_experiment(config, model_name, is_train=True):
 
     experiment_title = prefix + experiment_title
 
-    experiment_name = '{}@{}'.format(experiment_title, datetime.now().strftime("%d.%m.%Y-%H:%M:%S"))
+    experiment_name = '{}_{}'.format(experiment_title, datetime.now().strftime("%y%m%d-%H:%M"))
     print("Experiment name: {}".format(experiment_name))
 
     experiment_dir = os.path.join(args.logdir, experiment_name)

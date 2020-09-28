@@ -1,3 +1,6 @@
+# SMPL Mesh Generation for Human3.6M
+This `smpl` branch aims to generate a SMPL mesh for each Human3.6M frame using 3D ground-truth poses and betas optimized with multi-view consistency.
+
 [![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/190505754/3d-human-pose-estimation-on-human36m)](https://paperswithcode.com/sota/3d-human-pose-estimation-on-human36m?p=190505754)
 
 # Learnable Triangulation of Human Pose
