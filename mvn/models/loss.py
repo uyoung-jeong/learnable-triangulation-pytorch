@@ -78,3 +78,14 @@ class VolumetricCELoss(nn.Module):
 
 
         return loss / n_losses
+
+class SMPLMAELoss(nn.Module):
+    def __init__(delf):
+        super().__init__()
+    def forward(self, keypoints_pred, keypoints_gt, keypoints_binary_validity):
+        dimension = keypoints_pred.shape[-1]
+        loss = torch.sum(torch.abs(keypoints_gt - keypoints_pred[:,25:,:]) * keypoints_binary_validity)
+        loss = loss / (dimension * max(1, torch.sum(keypoints_binary_validity).item()))
+        #loss = torch.sum(torch.sqrt(torch.sum((keypoints_gt - keypoints_pred[:,25:,:]) ** 2 * keypoints_binary_validity, dim=2)))
+        #loss = loss / max(1, torch.sum(keypoints_binary_validity).item())
+        return loss

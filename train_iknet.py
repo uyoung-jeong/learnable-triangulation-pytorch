@@ -27,6 +27,7 @@ from tensorboardX import SummaryWriter
 from mvn.models.triangulation import RANSACTriangulationNet, AlgebraicTriangulationNet, VolumetricTriangulationNet
 from mvn.models.iknet import IKNet_Baseline
 from mvn.models.loss import KeypointsMSELoss, KeypointsMSESmoothLoss, KeypointsMAELoss, KeypointsL2Loss, VolumetricCELoss
+from mvn.models.loss import SMPLMAELoss
 
 from mvn.utils import img, multiview, op, vis, misc, cfg
 #from mvn.datasets import human36m
@@ -36,7 +37,9 @@ from mvn.datasets import utils as dataset_utils
 from tqdm import tqdm
 
 from smpl_libs import config as smpl_config
-from mvn.utils.transforms3d import quat2mat
+from smpl_libs.utils.geometry import quat_to_rotmat
+#from mvn.utils.transforms3d import quat2mat
+from smpl_libs.models.smpl import SMPL
 
 import ipdb
 
@@ -47,14 +50,18 @@ def parse_args():
     parser.add_argument('--eval', action='store_true', help="If set, then only evaluation will be done")
     parser.add_argument('--eval_dataset', type=str, default='val', help="Dataset split on which evaluate. Can be 'train' and 'val'")
 
+    parser.add_argument("--device", type=int, default=0, help="device index")
     parser.add_argument("--local_rank", type=int, help="Local rank of the process on the node")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
 
-    parser.add_argument("--logdir", type=str, default="/Vol1/dbstore/datasets/k.iskakov/logs/multi-view-net-repr", help="Path, where logs will be stored")
+    parser.add_argument("--logdir", type=str, default="logs", help="Path, where logs will be stored")
 
     # iknet params
     parser.add_argument("--iknet_depth", type=int, default=6, help="number of layers in iknet model")
     parser.add_argument("--iknet_width", type=int, default=1024, help="number of hidden units in each layer")
+
+    parser.add_argument('--activation', type=str, default='Sigmoid', help='activation function of IKNet')
+    parser.add_argument('--norm_raw_theta', type=int, default=0, help='1: perform normalization using norm of theta_raw. 0: no normalization inside iknet')
 
     args = parser.parse_args()
     return args
@@ -86,10 +93,10 @@ def setup_human36m_dataloaders(config, is_train, distributed_train):
             batch_size=config.opt.batch_size,
             shuffle=config.dataset.train.shuffle and (train_sampler is None), # debatable
             sampler=train_sampler,
-            collate_fn=dataset_utils.make_collate_fn(randomize_n_views=config.dataset.train.randomize_n_views,
+            collate_fn=dataset_utils.make_smpl_collate_fn(randomize_n_views=config.dataset.train.randomize_n_views,
                                                      min_n_views=config.dataset.train.min_n_views,
                                                      max_n_views=config.dataset.train.max_n_views),
-            num_workers=config.dataset.train.num_workers,
+            num_workers=0,#config.dataset.train.num_workers,
             worker_init_fn=dataset_utils.worker_init_fn,
             pin_memory=True
         )
@@ -115,10 +122,10 @@ def setup_human36m_dataloaders(config, is_train, distributed_train):
         val_dataset,
         batch_size=config.opt.val_batch_size if hasattr(config.opt, "val_batch_size") else config.opt.batch_size,
         shuffle=config.dataset.val.shuffle,
-        collate_fn=dataset_utils.make_collate_fn(randomize_n_views=config.dataset.val.randomize_n_views,
+        collate_fn=dataset_utils.make_smpl_collate_fn(randomize_n_views=config.dataset.val.randomize_n_views,
                                                  min_n_views=config.dataset.val.min_n_views,
                                                  max_n_views=config.dataset.val.max_n_views),
-        num_workers=config.dataset.val.num_workers,
+        num_workers=0,#config.dataset.val.num_workers,
         worker_init_fn=dataset_utils.worker_init_fn,
         pin_memory=True
     )
@@ -135,7 +142,7 @@ def setup_dataloaders(config, is_train=True, distributed_train=False):
     return train_dataloader, val_dataloader, train_sampler
 
 
-def setup_experiment(config, model_name, is_train=True):
+def setup_experiment(config, args, model_name, is_train=True):
     prefix = "" if is_train else "eval_"
 
     if config.title:
@@ -143,9 +150,9 @@ def setup_experiment(config, model_name, is_train=True):
     else:
         experiment_title = model_name
 
-    experiment_title = prefix + experiment_title
+    experiment_title = prefix + experiment_title + f'_denorm_scale={config.opt.max_keypoints_3d}_act={args.activation}_norm-raw-theta={args.norm_raw_theta}_depth={args.iknet_depth}_width={args.iknet_width}'
 
-    experiment_name = '{}@{}'.format(experiment_title, datetime.now().strftime("%d.%m.%Y-%H:%M:%S"))
+    experiment_name = '{}-{}'.format(experiment_title, datetime.now().strftime("%y%m%d-%H:%M"))
     print("Experiment name: {}".format(experiment_name))
 
     experiment_dir = os.path.join(args.logdir, experiment_name)
@@ -188,9 +195,12 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
         if is_train and config.opt.n_iters_per_epoch is not None:
             iterator = islice(iterator, config.opt.n_iters_per_epoch)
         """
+        scale_keypoints_3d = config.opt.scale_keypoints_3d if hasattr(config.opt, "scale_keypoints_3d") else 1.0
+        denorm_keypoints = config.opt.max_keypoints_3d if hasattr(config.opt, 'max_keypoints_3d') else 1.0 # used for denormalization
+
 
         for iter_i, batch in iterator:
-            with autograd.detect_anomaly():
+            with autograd.set_detect_anomaly(False): #autograd.detect_anomaly():
                 # measure data loading time
                 data_time = time.time() - end
 
@@ -201,36 +211,57 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                 images_batch, keypoints_3d_gt, smpl_keypoints_3d_gt, keypoints_3d_validity_gt, smpl_keypoints_validity, proj_matricies_batch = dataset_utils.prepare_smpl_batch(batch, device, config)
 
                 batch_size, n_views, image_shape = images_batch.shape[0], images_batch.shape[1], tuple(images_batch.shape[3:])
+                
+                # nomalize input
+                norm_keypoints_3d_gt = torch.div((smpl_keypoints_3d_gt + denorm_keypoints), 2*denorm_keypoints) # nonnegative domain
+                #norm_keypoints_3d_gt = torch.div(smpl_keypoints_3d_gt, denorm_keypoints) # allow negative input
 
-                pred_quaternion = model(smpl_keypoints_3d_gt)
+                pred_quaternion = model(norm_keypoints_3d_gt) # feed with normalized 3d keypoints
+                # pred_quaternion.shape: [5, 24, 4]
 
                 # convert from quaternions into rotation matrix
-                pred_rotmats = torch.stack([quat2mat(quat) for quat in pred_quaternion])
+                #pred_rotmats = torch.stack([quat2mat(quat) for quat in pred_quaternion])
+                pred_rotmats = torch.stack([quat_to_rotmat(q) for q in pred_quaternion])
 
                 # dummy betas
                 beta_size = 10
-                dummy_betas = torch.from_numpy((np.random.rand(batch_size, beta_size)-0.5)*0.05)
+                dummy_betas = torch.from_numpy((np.random.rand(batch_size, beta_size)*0.05)+1.0e-6).type(torch.float32)
+
+                #print(f'betas.shape:{dummy_betas.shape}') # [5, 10]
+                #print(f'pred_rotmats.shape:{pred_rotmats.shape}') # [5, 24, 3, 3]
+                #print(f'global_orient.shape:{pred_rotmats[:,0].unsqueeze(1).shape}') # [5, 1, 3, 3]
 
                 # run smpl
-                smpl_output = smpl(betas=dummy_betas, body_pose=pred_rotmats[:,1:], global_orient=pred_rotmats[:,0].unsqueeze(1), pose2rot=False)
-                keypoints_3d_pred = smpl_output.joints
+                smpl_output = smpl(betas=dummy_betas.to(device), body_pose=pred_rotmats[:,1:], global_orient=pred_rotmats[:,0].unsqueeze(1), pose2rot=False)
+                #smpl_output = torch.stack([smpl(betas=dummy_betas.to(device), body_pose=mat[:,1:], global_orient=mat[:,0].unsqueeze(1), pose2rot=False) for mat in pred_rotmats])
+                keypoints_3d_pred = smpl_output.joints # [5, 49, 3]
 
-                ipdb.set_trace()
 
                 n_joints = keypoints_3d_pred.shape[1]
 
                 keypoints_3d_binary_validity_gt = (smpl_keypoints_validity > 0.0).type(torch.float32)
 
-                scale_keypoints_3d = config.opt.scale_keypoints_3d if hasattr(config.opt, "scale_keypoints_3d") else 1.0
+                # subtract by pelvis
+                gt_pelvis = (norm_keypoints_3d_gt[:,2,:] + norm_keypoints_3d_gt[:,3,:])/2
+                norm_keypoints_3d_gt = norm_keypoints_3d_gt - gt_pelvis[:,None,:]
+
+                keypoints_3d_pred = keypoints_3d_pred - gt_pelvis[:,None,:]
 
                 # calculate loss
                 total_loss = 0.0
-                loss = criterion(keypoints_3d_pred * scale_keypoints_3d, smpl_keypoints_3d_gt * scale_keypoints_3d, keypoints_3d_binary_validity_gt)
+
+                # scale only on gt keypoints
+                loss = criterion(keypoints_3d_pred, norm_keypoints_3d_gt, keypoints_3d_binary_validity_gt)
+                denorm_loss = loss * 2 * denorm_keypoints
+                #loss = criterion(keypoints_3d_pred*scale_keypoints_3d * denorm_keypoints, smpl_keypoints_3d_gt * scale_keypoints_3d, keypoints_3d_binary_validity_gt)
                 total_loss += loss
                 metric_dict[f'{config.opt.criterion}'].append(loss.item())
 
                 metric_dict['total_loss'].append(total_loss.item())
-                print('epoch: {}, {}: {}, volumetric_ce_loss: {}, total_loss: {}'.format(epoch, config.opt.criterion, metric_dict[f'{config.opt.criterion}'][-1], metric_dict['volumetric_ce_loss'][-1], total_loss.item()))
+                metric_dict['denorm_loss'].append(denorm_loss.item())
+                
+                if iter_i % config.vis_freq == 0:
+                    print('epoch: {}, {}: {:.6f}, total_loss: {:.6f}, denorm_loss: {:.6f}'.format(epoch, config.opt.criterion, metric_dict[f'{config.opt.criterion}'][-1], total_loss.item(), denorm_loss.item()))
 
                 if is_train:
                     opt.zero_grad()
@@ -332,7 +363,7 @@ def main(args):
     if is_distributed:
         device = torch.device(args.local_rank)
     else:
-        device = torch.device(0)
+        device = torch.device(args.device)
 
     # config
     config = cfg.load_config(args.config)
@@ -344,28 +375,41 @@ def main(args):
     smpl = SMPL(smpl_config.SMPL_MODEL_DIR,
                 batch_size = config.opt.batch_size,
                 create_transl=False).to(device)
-    smpl.eval() # do not train smpl model
+
+    """
+    # do not train smpl model
+    for param in smpl.parameters():
+        param.requires_grad = False
+    """
 
     # criterion
     criterion_class = {
-        "MSE": KeypointsMSELoss,
-        "MSESmooth": KeypointsMSESmoothLoss,
-        "MAE": KeypointsMAELoss
+        #"MSE": KeypointsMSELoss,
+        #"MSESmooth": KeypointsMSESmoothLoss,
+        "MAE": SMPLMAELoss
     }[config.opt.criterion]
 
     if config.opt.criterion == "MSESmooth":
         criterion = criterion_class(config.opt.mse_smooth_threshold)
     else:
-        criterion = criterion_class()
+        criterion = criterion_class().to(device)
 
     # optimizer
     opt = None
     if not args.eval:
         opt = torch.optim.Adam(
             params=filter(lambda p: p.requires_grad, model.parameters()),
-            lr=config.opt.lr
-            weight_decay=1.0e-5
+            lr=config.opt.lr,
+            weight_decay=1.0e-6
         )
+        """
+        opt = torch.optim.Adam(
+            [{'params': model.parameters(), 'lr': config.opt.lr},
+             {'params': smpl.parameters(), 'lr': 0.0}
+            ],
+            lr = config.opt.lr
+            )
+        """
 
 
     # datasets
@@ -375,7 +419,7 @@ def main(args):
     # experiment
     experiment_dir, writer = None, None
     if master:
-        experiment_dir, writer = setup_experiment(config, type(model).__name__, is_train=not args.eval)
+        experiment_dir, writer = setup_experiment(config, args, type(model).__name__, is_train=not args.eval)
 
     # multi-gpu
     if is_distributed:

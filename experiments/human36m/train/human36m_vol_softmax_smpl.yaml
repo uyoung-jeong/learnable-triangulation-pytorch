@@ -1,4 +1,4 @@
-title: "human36m_vol_softmax"
+title: "h36m"
 kind: "human36m"
 vis_freq: 1000
 vis_n_elements: 10
@@ -22,6 +22,9 @@ opt:
   volume_net_lr: 0.001
 
   scale_keypoints_3d: 0.1
+  max_keypoints_3d: 3000
+
+  grad_clip: true
 
 model:
   name: "vol"
@@ -51,6 +54,9 @@ model:
 
     num_joints: 17
     num_layers: 152
+
+smpl:
+  num_joints: 24
 
 dataset:
   kind: "human36m"

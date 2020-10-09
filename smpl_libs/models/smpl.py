@@ -7,7 +7,7 @@ from smplx.utils import SMPLOutput
 from smplx.lbs import vertices2joints
 
 from smpl_libs import config
-import constants
+from smpl_libs import constants
 
 class SMPL(_SMPL):
     """ Extension of the official SMPL implementation to support more joints """
@@ -31,4 +31,5 @@ class SMPL(_SMPL):
                              joints=joints,
                              betas=smpl_output.betas,
                              full_pose=smpl_output.full_pose)
+
         return output

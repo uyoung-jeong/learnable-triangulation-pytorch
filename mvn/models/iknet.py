@@ -15,44 +15,66 @@ class IKNet_Baseline(nn.Module):
     def __init__(self, args, config, device='cuda:0'):
         super().__init__()
 
-        self.num_joints = config.model.backbone.num_joints
+        self.num_joints = config.smpl.num_joints
 
         # transfer
         self.transfer_cmu_to_human36m = config.model.transfer_cmu_to_human36m if hasattr(config.model, "transfer_cmu_to_human36m") else False
 
         self.args = args
+        self.config = config
+        self.device = device
         self.depth = args.iknet_depth
         self.widths = args.iknet_width
-        self.in_feautres = self.num_joints * 3 # initial input size of the model
+        self.in_features = self.num_joints * 3 # initial input size of the model
         self.output_size = self.num_joints * 4
 
+        in_features = self.in_features
         layers = []
-        for i in range(depth):
-            layers.append(nn.Linear(in_features=in_features, out_features=width))
-            layers.append(nn.BatchNorm1d(num_features=width))
-            layers.append(nn.Sigmoid())
+        for i in range(self.depth):
+            layers.append(nn.Linear(in_features=in_features, out_features=self.widths))
+            layers.append(nn.BatchNorm1d(num_features=self.widths))
+            
+            activation_type = args.activation.lower()
+            if activation_type == 'leakyrelu':
+                layers.append(nn.LeakyReLU(inplace=True))
+            elif activation_type == 'relu':
+                layers.append(nn.ReLU())
+            elif activation_type == 'softsign':
+                layers.append(nn.Softsign())
+            else:
+                layers.append(nn.Sigmoid())
+
             if i == 0:
-                in_features = width
+                in_features = self.widths
 
         self.feature_layers = nn.Sequential(*layers)
-        self.theta_raw_layer = nn.Linear(in_features=width, out_features=self.output_size)
+
+        self.theta_raw_layer = nn.Linear(in_features=self.widths, out_features=self.output_size)
 
         self.init_weights(pretrained_path='')
 
-    # 3d_keypoints: [batch_size, n_joints, 3]
+    # keypoints_3d: [batch_size, n_joints, 3]
     # theta: quaternion format
-    def forward(self, 3d_keypoints):
-        x = self.feature_layers(3d_keypoints)
-        theta_raw = self.theta_raw_layer(x)
-        theta_raw = torch.reshape(theta_raw, (-1, self.num_joints, 4))
-        eps = torch.finfo(torch.float32).eps
-        norm = torch.max(torch.norm([theta_raw, eps], dim=-1, keepdim=True))
+    def forward(self, keypoints_3d):
+        x = keypoints_3d
+        if len(x.shape) == 3: # need to flatten joint array
+            x = torch.reshape(x, (-1, self.in_features))
 
-        theta_pos = torch.div(theta_raw, norm)
-        theta_neg = theta_pos * -1
-        theta = torch.where(theta_pose[:,:,0:1] > 0, theta_pos, theta_neg)
+        x = self.feature_layers(x)
 
-        return theta
+        if args.norm_raw_theta == 1:
+            theta_raw = self.theta_raw_layer(x)
+            theta_raw = torch.reshape(theta_raw, (-1, self.num_joints, 4))
+
+            eps = torch.zeros((*theta_raw.shape[:2], 1)) + torch.finfo(torch.float32).eps
+
+            norm = torch.max(torch.norm(theta_raw, dim=-1, keepdim=True), eps.to(self.device))
+
+            theta_pos = torch.div(theta_raw, norm)
+            theta_neg = theta_pos * -1
+            return torch.where(theta_pos[:,:,0:1] > 0, theta_pos, theta_neg)
+        else: 
+            return torch.where(theta_raw[:,:,0:1] > 0, theta_raw, theta_raw * -1)
 
     def init_weights(self, pretrained_path=''):
         if pretrained_path != '':
@@ -61,4 +83,7 @@ class IKNet_Baseline(nn.Module):
 
         for m in self.modules():
             if isinstance(m, nn.Linear):
-                nn.init.kaiming_normal_(m.weight, std=1.0e-3)
+                nn.init.xavier_uniform_(m.weight, gain=0.01)
+                #nn.init.xavier_normal_(m.weight)
+                #nn.init.kaiming_normal_(m.weight)
+                #nn.init.uniform_(m.weight)

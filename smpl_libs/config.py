@@ -5,7 +5,7 @@ Things you need to change: *_ROOT that indicate the path to each dataset
 """
 from os.path import join
 
-H36M_ROOT = '/home/uyoung/human_pose_estimation/datasets/Human36M/extracted'
+H36M_ROOT = 'data/human36m/extracted'
 LSP_ROOT = ''
 LSP_ORIGINAL_ROOT = ''
 LSPET_ROOT = ''
@@ -16,7 +16,7 @@ PW3D_ROOT = ''
 UPI_S1H_ROOT = ''
 
 # Output folder to save test/train npz files
-DATASET_NPZ_PATH = 'data/dataset_extras'
+DATASET_NPZ_PATH = 'data/spin/dataset_extras'
 
 # Output folder to store the openpose detections
 # This is requires only in case you want to regenerate 
@@ -54,10 +54,10 @@ DATASET_FOLDERS = {'h36m': H36M_ROOT,
                 }
 
 CUBE_PARTS_FILE = 'data/cube_parts.npy'
-JOINT_REGRESSOR_TRAIN_EXTRA = 'data/J_regressor_extra.npy'
-JOINT_REGRESSOR_H36M = 'data/J_regressor_h36m.npy'
-VERTEX_TEXTURE_FILE = 'data/vertex_texture.npy'
-STATIC_FITS_DIR = 'data/static_fits'
-SMPL_MEAN_PARAMS = 'data/smpl_mean_params.npz'
-#SMPL_MODEL_DIR = '/home/uyoung/human_pose_estimation/SMPL/datasets/SMPLX/models/'
-SMPL_MODEL_DIR = 'data/smplify_models/'
+JOINT_REGRESSOR_TRAIN_EXTRA = 'data/spin/J_regressor_extra.npy'
+JOINT_REGRESSOR_H36M = 'data/spin/J_regressor_h36m.npy'
+VERTEX_TEXTURE_FILE = 'data/spin/vertex_texture.npy'
+STATIC_FITS_DIR = 'data/spin/static_fits'
+SMPL_MEAN_PARAMS = 'data/spin/smpl_mean_params.npz'
+#SMPL_MODEL_DIR = 'data/spin/smplx_models/'
+SMPL_MODEL_DIR = 'data/spin/smplify_models/'
