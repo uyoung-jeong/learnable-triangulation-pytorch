@@ -150,9 +150,9 @@ def setup_experiment(config, args, model_name, is_train=True):
     else:
         experiment_title = model_name
 
-    experiment_title = prefix + experiment_title + f'_denorm_scale={config.opt.max_keypoints_3d}_act={args.activation}_norm-raw-theta={args.norm_raw_theta}_depth={args.iknet_depth}_width={args.iknet_width}'
+    experiment_title = prefix + experiment_title 
 
-    experiment_name = '{}-{}'.format(experiment_title, datetime.now().strftime("%y%m%d-%H:%M"))
+    experiment_name = '{}-{}'.format(experiment_title, datetime.now().strftime("%y%m%d-%H:%M")) + f'-denorm_scale={config.opt.max_keypoints_3d}-act={args.activation}-norm_raw_theta={args.norm_raw_theta}-depth={args.iknet_depth}-width={args.iknet_width}'
     print("Experiment name: {}".format(experiment_name))
 
     experiment_dir = os.path.join(args.logdir, experiment_name)

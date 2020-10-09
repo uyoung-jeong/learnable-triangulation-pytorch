@@ -1,5 +1,25 @@
 # SMPL Mesh Generation for Human3.6M
 This `smpl` branch aims to generate a SMPL mesh for each Human3.6M frame using 3D ground-truth poses and betas optimized with multi-view consistency.
+This `inverse_kinematics` branch trains a angular representation regression model.
+Regression model gets 3D keypoint coordinates as input, and predicts their corresponding angular representation(quaternion).
+Predicted quaternions are used as input of SMPL model.
+
+# Setup Process
+1. checkout to current branch and setup data and model files
+ * `pretrained/human36m` : default files for aligning base joint
+ * `human36m` : where `extracted/` `processed/`, and `extrac` directories are stored
+ * `spin` : where SPIN's data are stored
+
+2. install additional required modules
+ * smplx==0.1.21
+ * dataclasses
+ * chumpy==0.70
+
+3. additional preprocessing
+ * run `mvn/datasets/human36m_preprocessing/generate-labels-npy-multiview-smpl.py`
+
+
+
 
 [![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/190505754/3d-human-pose-estimation-on-human36m)](https://paperswithcode.com/sota/3d-human-pose-estimation-on-human36m?p=190505754)
 

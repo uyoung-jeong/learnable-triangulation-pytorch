@@ -61,11 +61,10 @@ class IKNet_Baseline(nn.Module):
             x = torch.reshape(x, (-1, self.in_features))
 
         x = self.feature_layers(x)
+        theta_raw = self.theta_raw_layer(x)
+        theta_raw = torch.reshape(theta_raw, (-1, self.num_joints, 4))
 
-        if args.norm_raw_theta == 1:
-            theta_raw = self.theta_raw_layer(x)
-            theta_raw = torch.reshape(theta_raw, (-1, self.num_joints, 4))
-
+        if self.args.norm_raw_theta == 1:
             eps = torch.zeros((*theta_raw.shape[:2], 1)) + torch.finfo(torch.float32).eps
 
             norm = torch.max(torch.norm(theta_raw, dim=-1, keepdim=True), eps.to(self.device))
