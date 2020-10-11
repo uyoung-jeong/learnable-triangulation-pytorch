@@ -65,6 +65,8 @@ def parse_args():
 
     parser.add_argument('--activation', type=str, default='Sigmoid', help='activation function of IKNet')
     parser.add_argument('--norm_raw_theta', type=int, default=0, help='1: perform normalization using norm of theta_raw. 0: no normalization inside iknet')
+    parser.add_argument('--denorm_scale', type=int, default=3000, help='keypoint denorm scale')
+    parser.add_argument('--normalize_gt', type=int, default=1, help='1: normalize gt keypoints. assume that pred is normalized in same scale')
 
     args = parser.parse_args()
     return args
@@ -157,7 +159,7 @@ def setup_experiment(config, args, model_name, is_train=True):
     experiment_title = prefix + experiment_title 
 
     experiment_name = '{}-{}'.format(experiment_title, datetime.now().strftime("%y%m%d-%H:%M")) +\
-                      f'-denorm={config.opt.max_keypoints_3d}-act={args.activation}-norm_raw={args.norm_raw_theta}-d={args.iknet_depth}-w={args.iknet_width}-decay={args.lr_decay}'
+                      f'-denorm={args.denorm_scale}-act={args.activation}-norm_raw={args.norm_raw_theta}-d={args.iknet_depth}-w={args.iknet_width}-decay={args.lr_decay}'
     print("Experiment name: {}".format(experiment_name))
 
     experiment_dir = os.path.join(args.logdir, experiment_name)
@@ -201,7 +203,8 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
             iterator = islice(iterator, config.opt.n_iters_per_epoch)
         """
         scale_keypoints_3d = config.opt.scale_keypoints_3d if hasattr(config.opt, "scale_keypoints_3d") else 1.0
-        denorm_keypoints = config.opt.max_keypoints_3d if hasattr(config.opt, 'max_keypoints_3d') else 1.0 # used for denormalization
+        #denorm_keypoints = config.opt.max_keypoints_3d if hasattr(config.opt, 'max_keypoints_3d') else 1.0 # used for denormalization
+        denorm_keypoints = args.denorm_scale
 
         keypoints_3d_binary_validity_gt = None
 
@@ -221,8 +224,10 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                 batch_size = keypoints_3d_gt.shape[0]
                 
                 # nomalize input
-                norm_keypoints_3d_gt = torch.div((smpl_keypoints_3d_gt + denorm_keypoints), 2*denorm_keypoints) # nonnegative domain
-                #norm_keypoints_3d_gt = torch.div(smpl_keypoints_3d_gt, denorm_keypoints) # allow negative input
+                norm_keypoints_3d_gt = smpl_keypoints_3d_gt.clone()
+                if args.normalize_gt == 1:
+                    norm_keypoints_3d_gt = torch.div((smpl_keypoints_3d_gt + denorm_keypoints), 2*denorm_keypoints) # nonnegative domain
+                    #norm_keypoints_3d_gt = torch.div(smpl_keypoints_3d_gt, denorm_keypoints) # allow negative input
 
                 pred_quaternion = model(norm_keypoints_3d_gt) # feed with normalized 3d keypoints
                 # pred_quaternion.shape: [5, 24, 4]
@@ -260,13 +265,16 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
 
                 # scale only on gt keypoints
                 loss = criterion(norm_keypoints_3d_pred, norm_keypoints_3d_gt, keypoints_3d_binary_validity_gt)
-                denorm_loss = loss * 2 * denorm_keypoints
                 #loss = criterion(keypoints_3d_pred*scale_keypoints_3d * denorm_keypoints, smpl_keypoints_3d_gt * scale_keypoints_3d, keypoints_3d_binary_validity_gt)
                 total_loss += loss
                 metric_dict[f'{config.opt.criterion}'].append(loss.item())
 
                 metric_dict['total_loss'].append(total_loss.item())
-                metric_dict['denorm_loss'].append(denorm_loss.item())
+
+                denorm_loss = loss
+                if args.normalize_gt == 1:
+                    denorm_loss = loss * 2 * denorm_keypoints
+                    metric_dict['denorm_loss'].append(denorm_loss.item())
                 
                 if iter_i % config.vis_freq == 0:
                     print('epoch:{}, step:{}, {}:{:.6f}, total_loss:{:.6f}, denorm_loss:{:.6f}'.format(
@@ -472,6 +480,7 @@ def main(args):
                 print(f"Best case saved at {epoch}th epoch. scalar_metric:{scalar_metric}")
 
             print(f"{n_iters_total_train} iters done.")
+        print(f'best metric:{best_metric}, best epoch:{best_epoch}')
     else:
         print('evaluation process')
         if args.eval_dataset == 'train':
