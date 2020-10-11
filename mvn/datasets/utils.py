@@ -47,6 +47,7 @@ def make_smpl_collate_fn(randomize_n_views=True, min_n_views=10, max_n_views=31)
             return None
 
         batch = dict()
+        """
         total_n_views = min(len(item['images']) for item in items)
 
         indexes = np.arange(total_n_views)
@@ -56,12 +57,15 @@ def make_smpl_collate_fn(randomize_n_views=True, min_n_views=10, max_n_views=31)
         else:
             indexes = np.arange(total_n_views)
 
+        """
         batch['subject'] = [item['subject'] for item in items]
         batch['action'] = [item['action'] for item in items]
 
+        """
         batch['images'] = np.stack([np.stack([item['images'][i] for item in items], axis=0) for i in indexes], axis=0).swapaxes(0, 1)
         batch['detections'] = np.array([[item['detections'][i] for item in items] for i in indexes]).swapaxes(0, 1)
         batch['cameras'] = [[item['cameras'][i] for item in items] for i in indexes]
+        """
 
         batch['keypoints_3d'] = [item['keypoints_3d'] for item in items]
         batch['smpl_keypoints_3d'] = [item['smpl_keypoints_3d'] for item in items]
@@ -103,6 +107,7 @@ def prepare_batch(batch, device, config, is_train=True):
     return images_batch, keypoints_3d_batch_gt, keypoints_3d_validity_batch_gt, proj_matricies_batch
 
 def prepare_smpl_batch(batch, device, config, is_train=True):
+    """
     # images
     images_batch = []
     for image_batch in batch['images']:
@@ -111,6 +116,7 @@ def prepare_smpl_batch(batch, device, config, is_train=True):
         images_batch.append(image_batch)
 
     images_batch = torch.stack(images_batch, dim=0)
+    """
 
     # 3D keypoints
     keypoints_3d_batch_gt = torch.from_numpy(np.stack(batch['keypoints_3d'], axis=0)[:, :, :3]).float().to(device)
@@ -124,9 +130,12 @@ def prepare_smpl_batch(batch, device, config, is_train=True):
     # smpl keypoints validity
     smpl_keypoints_3d_validity = torch.from_numpy(np.stack(batch['smpl_keypoints_3d'], axis=0)[:,:,3:]).float().to(device)
 
+    """
     # projection matricies
     proj_matricies_batch = torch.stack([torch.stack([torch.from_numpy(camera.projection) for camera in camera_batch], dim=0) for camera_batch in batch['cameras']], dim=0).transpose(1, 0)  # shape (batch_size, n_views, 3, 4)
     proj_matricies_batch = proj_matricies_batch.float().to(device)
+    """
 
-    return images_batch, keypoints_3d_batch_gt, smpl_keypoints_3d_batch_gt, keypoints_3d_validity_batch_gt, smpl_keypoints_3d_validity, proj_matricies_batch
+    #return images_batch, keypoints_3d_batch_gt, smpl_keypoints_3d_batch_gt, keypoints_3d_validity_batch_gt, smpl_keypoints_3d_validity, proj_matricies_batch
+    return keypoints_3d_batch_gt, smpl_keypoints_3d_batch_gt, keypoints_3d_validity_batch_gt, smpl_keypoints_3d_validity
 

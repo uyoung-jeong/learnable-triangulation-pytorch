@@ -56,6 +56,9 @@ def parse_args():
 
     parser.add_argument("--logdir", type=str, default="logs", help="Path, where logs will be stored")
 
+    # training params
+    parser.add_argument("--lr_decay", type=float, default=0.99, help='learning rate decay')
+
     # iknet params
     parser.add_argument("--iknet_depth", type=int, default=6, help="number of layers in iknet model")
     parser.add_argument("--iknet_width", type=int, default=1024, help="number of hidden units in each layer")
@@ -96,7 +99,8 @@ def setup_human36m_dataloaders(config, is_train, distributed_train):
             collate_fn=dataset_utils.make_smpl_collate_fn(randomize_n_views=config.dataset.train.randomize_n_views,
                                                      min_n_views=config.dataset.train.min_n_views,
                                                      max_n_views=config.dataset.train.max_n_views),
-            num_workers=0,#config.dataset.train.num_workers,
+            drop_last=True, # prevent bath size 1 in the last batch, which will cause an error during BatchNorm computation
+            num_workers=config.dataset.train.num_workers,
             worker_init_fn=dataset_utils.worker_init_fn,
             pin_memory=True
         )
@@ -125,7 +129,7 @@ def setup_human36m_dataloaders(config, is_train, distributed_train):
         collate_fn=dataset_utils.make_smpl_collate_fn(randomize_n_views=config.dataset.val.randomize_n_views,
                                                  min_n_views=config.dataset.val.min_n_views,
                                                  max_n_views=config.dataset.val.max_n_views),
-        num_workers=0,#config.dataset.val.num_workers,
+        num_workers=config.dataset.val.num_workers,
         worker_init_fn=dataset_utils.worker_init_fn,
         pin_memory=True
     )
@@ -152,7 +156,8 @@ def setup_experiment(config, args, model_name, is_train=True):
 
     experiment_title = prefix + experiment_title 
 
-    experiment_name = '{}-{}'.format(experiment_title, datetime.now().strftime("%y%m%d-%H:%M")) + f'-denorm_scale={config.opt.max_keypoints_3d}-act={args.activation}-norm_raw_theta={args.norm_raw_theta}-depth={args.iknet_depth}-width={args.iknet_width}'
+    experiment_name = '{}-{}'.format(experiment_title, datetime.now().strftime("%y%m%d-%H:%M")) +\
+                      f'-denorm={config.opt.max_keypoints_3d}-act={args.activation}-norm_raw={args.norm_raw_theta}-d={args.iknet_depth}-w={args.iknet_width}-decay={args.lr_decay}'
     print("Experiment name: {}".format(experiment_name))
 
     experiment_dir = os.path.join(args.logdir, experiment_name)
@@ -172,7 +177,7 @@ def setup_experiment(config, args, model_name, is_train=True):
     return experiment_dir, writer
 
 
-def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_iters_total=0, is_train=True, caption='', master=False, experiment_dir=None, writer=None, best_metric=999.9):
+def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_iters_total=0, is_train=True, caption='', master=False, experiment_dir=None, writer=None, best_metric=999.9, scheduler=None):
     name = "train" if is_train else "val"
     model_type = config.model.name
 
@@ -198,6 +203,7 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
         scale_keypoints_3d = config.opt.scale_keypoints_3d if hasattr(config.opt, "scale_keypoints_3d") else 1.0
         denorm_keypoints = config.opt.max_keypoints_3d if hasattr(config.opt, 'max_keypoints_3d') else 1.0 # used for denormalization
 
+        keypoints_3d_binary_validity_gt = None
 
         for iter_i, batch in iterator:
             with autograd.set_detect_anomaly(False): #autograd.detect_anomaly():
@@ -208,9 +214,11 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                     print("Found None batch")
                     continue
 
-                images_batch, keypoints_3d_gt, smpl_keypoints_3d_gt, keypoints_3d_validity_gt, smpl_keypoints_validity, proj_matricies_batch = dataset_utils.prepare_smpl_batch(batch, device, config)
+                #images_batch, keypoints_3d_gt, smpl_keypoints_3d_gt, keypoints_3d_validity_gt, smpl_keypoints_validity, proj_matricies_batch = dataset_utils.prepare_smpl_batch(batch, device, config)
+                keypoints_3d_gt, smpl_keypoints_3d_gt, keypoints_3d_validity_gt, smpl_keypoints_validity = dataset_utils.prepare_smpl_batch(batch, device, config)
 
-                batch_size, n_views, image_shape = images_batch.shape[0], images_batch.shape[1], tuple(images_batch.shape[3:])
+                #batch_size, n_views, image_shape = images_batch.shape[0], images_batch.shape[1], tuple(images_batch.shape[3:])
+                batch_size = keypoints_3d_gt.shape[0]
                 
                 # nomalize input
                 norm_keypoints_3d_gt = torch.div((smpl_keypoints_3d_gt + denorm_keypoints), 2*denorm_keypoints) # nonnegative domain
@@ -241,17 +249,17 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
 
                 keypoints_3d_binary_validity_gt = (smpl_keypoints_validity > 0.0).type(torch.float32)
 
-                # subtract by pelvis
+                # align by hips
                 gt_pelvis = (norm_keypoints_3d_gt[:,2,:] + norm_keypoints_3d_gt[:,3,:])/2
                 norm_keypoints_3d_gt = norm_keypoints_3d_gt - gt_pelvis[:,None,:]
 
-                keypoints_3d_pred = keypoints_3d_pred - gt_pelvis[:,None,:]
+                norm_keypoints_3d_pred = keypoints_3d_pred - gt_pelvis[:,None,:]
 
                 # calculate loss
                 total_loss = 0.0
 
                 # scale only on gt keypoints
-                loss = criterion(keypoints_3d_pred, norm_keypoints_3d_gt, keypoints_3d_binary_validity_gt)
+                loss = criterion(norm_keypoints_3d_pred, norm_keypoints_3d_gt, keypoints_3d_binary_validity_gt)
                 denorm_loss = loss * 2 * denorm_keypoints
                 #loss = criterion(keypoints_3d_pred*scale_keypoints_3d * denorm_keypoints, smpl_keypoints_3d_gt * scale_keypoints_3d, keypoints_3d_binary_validity_gt)
                 total_loss += loss
@@ -261,7 +269,8 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                 metric_dict['denorm_loss'].append(denorm_loss.item())
                 
                 if iter_i % config.vis_freq == 0:
-                    print('epoch: {}, {}: {:.6f}, total_loss: {:.6f}, denorm_loss: {:.6f}'.format(epoch, config.opt.criterion, metric_dict[f'{config.opt.criterion}'][-1], total_loss.item(), denorm_loss.item()))
+                    print('epoch:{}, step:{}, {}:{:.6f}, total_loss:{:.6f}, denorm_loss:{:.6f}'.format(
+                                epoch, iter_i, config.opt.criterion, metric_dict[f'{config.opt.criterion}'][-1], total_loss.item(), denorm_loss.item()))
 
                 if is_train:
                     opt.zero_grad()
@@ -271,8 +280,13 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                         torch.nn.utils.clip_grad_norm_(model.parameters(), config.opt.grad_clip / config.opt.lr)
 
                     metric_dict['grad_norm_times_lr'].append(config.opt.lr * misc.calc_gradient_norm(filter(lambda x: x[1].requires_grad, model.named_parameters())))
+                    metric_dict['lr'].append(opt.param_groups[0]['lr'])
 
                     opt.step()
+
+                    # update scheduler for every vis_freq
+                    if iter_i % config.vis_freq == 0:
+                        scheduler.step()
 
                 # save answers for evalulation
                 if not is_train:
@@ -296,7 +310,7 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
 
                     # dump to tensorboard per-iter stats about sizes
                     writer.add_scalar(f"{name}/batch_size", batch_size, n_iters_total)
-                    writer.add_scalar(f"{name}/n_views", n_views, n_iters_total)
+                    #writer.add_scalar(f"{name}/n_views", n_views, n_iters_total)
 
                     n_iters_total += 1
 
@@ -308,7 +322,7 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
             results['indexes'] = np.concatenate(results['indexes'])
 
             try:
-                scalar_metric, full_metric = dataloader.dataset.evaluate(results['keypoints_3d'])
+                scalar_metric, full_metric = dataloader.dataset.evaluate(results['keypoints_3d'], keypoints_3d_binary_validity_gt)
             except Exception as e:
                 print("Failed to evaluate. Reason: ", e)
                 scalar_metric, full_metric = 0.0, {}
@@ -370,6 +384,7 @@ def main(args):
     config.opt.n_iters_per_epoch = config.opt.n_objects_per_epoch // config.opt.batch_size
 
     model = IKNet_Baseline(args, config, device=device).to(device)
+    print(model)
 
     # load smpl model
     smpl = SMPL(smpl_config.SMPL_MODEL_DIR,
@@ -411,6 +426,8 @@ def main(args):
             )
         """
 
+    # lr scheduler
+    lr_scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda=lambda step: step * args.lr_decay)
 
     # datasets
     print("Loading data...")
@@ -435,7 +452,7 @@ def main(args):
             if train_sampler is not None:
                 train_sampler.set_epoch(epoch)
 
-            n_iters_total_train, _ = one_epoch(model, smpl, criterion, opt, config, train_dataloader, device, epoch, n_iters_total=n_iters_total_train, is_train=True, master=master, experiment_dir=experiment_dir, writer=writer, best_metric=best_metric)
+            n_iters_total_train, _ = one_epoch(model, smpl, criterion, opt, config, train_dataloader, device, epoch, n_iters_total=n_iters_total_train, is_train=True, master=master, experiment_dir=experiment_dir, writer=writer, best_metric=best_metric, scheduler=lr_scheduler)
             n_iters_total_val, scalar_metric = one_epoch(model, smpl, criterion, opt, config, val_dataloader, device, epoch, n_iters_total=n_iters_total_val, is_train=False, master=master, experiment_dir=experiment_dir, writer=writer, best_metric=best_metric)
 
             if master and scalar_metric < best_metric:

@@ -54,7 +54,7 @@ class Human36MMultiViewDataset(Dataset):
         """
         assert train or test, '`Human36MMultiViewDataset` must be constructed with at least ' \
                               'one of `test=True` / `train=True`'
-        assert kind in ("mpii", "human36m")
+        assert kind in ("mpii", "human36m", "smpl")
 
         self.h36m_root = h36m_root
         self.labels_path = labels_path
@@ -99,6 +99,7 @@ class Human36MMultiViewDataset(Dataset):
         self.labels['table'] = self.labels['table'][np.concatenate(indices)]
 
         self.num_keypoints = 16 if kind == "mpii" else 17
+        self.num_smpl_keypoints = 24
         assert self.labels['table']['keypoints'].shape[1] == 17, "Use a newer 'labels' file"
 
         self.keypoints_3d_pred = None
@@ -124,6 +125,7 @@ class Human36MMultiViewDataset(Dataset):
         sample['subject'] = subject
         sample['action'] = action
 
+        """
         for camera_idx, camera_name in enumerate(self.labels['camera_names']):
             if camera_idx in self.ignore_cameras:
                 continue
@@ -169,6 +171,7 @@ class Human36MMultiViewDataset(Dataset):
             sample['detections'].append(bbox + (1.0,)) # TODO add real confidences
             sample['cameras'].append(retval_camera)
             sample['proj_matrices'].append(retval_camera.projection)
+        """
 
         # 3D keypoints
         # add dummy confidences
@@ -240,12 +243,20 @@ class Human36MMultiViewDataset(Dataset):
 
         return subject_scores
 
-    def evaluate(self, keypoints_3d_predicted, split_by_subject=False, transfer_cmu_to_human36m=False, transfer_human36m_to_human36m=False):
-        keypoints_gt = self.labels['table']['keypoints'][:, :self.num_keypoints]
+    def evaluate(self, keypoints_3d_predicted, keypoints_validity=None, split_by_subject=False, transfer_cmu_to_human36m=False, transfer_human36m_to_human36m=False):
+        keypoints_gt = self.labels['table']['keypoints_smpl'][:, :self.num_smpl_keypoints,:3]
+        keypoints_3d_predicted = keypoints_3d_predicted[:,25:,:] * 2 * 3000 - 3000 # denormalize
         if keypoints_3d_predicted.shape != keypoints_gt.shape:
             raise ValueError(
                 '`keypoints_3d_predicted` shape should be %s, got %s' % \
                 (keypoints_gt.shape, keypoints_3d_predicted.shape))
+
+        # mask with binary validity
+        if keypoints_validity is not None:
+            if len(keypoints_validity.shape)==3:
+                keypoints_validity = keypoints_validity[0].cpu().numpy()
+            
+            keypoints_3d_predicted = np.multiply(keypoints_3d_predicted, keypoints_validity[np.newaxis,:,:])
 
         if transfer_cmu_to_human36m or transfer_human36m_to_human36m:
             human36m_joints = [10, 11, 15, 14, 1, 4]
@@ -257,6 +268,7 @@ class Human36MMultiViewDataset(Dataset):
             keypoints_gt = keypoints_gt[:, human36m_joints]
             keypoints_3d_predicted = keypoints_3d_predicted[:, cmu_joints]
 
+
         # mean error per 16/17 joints in mm, for each pose
         per_pose_error = np.sqrt(((keypoints_gt - keypoints_3d_predicted) ** 2).sum(2)).mean(1)
 
@@ -266,8 +278,8 @@ class Human36MMultiViewDataset(Dataset):
         else:
             root_index = 0
 
-        keypoints_gt_relative = keypoints_gt - keypoints_gt[:, root_index:root_index + 1, :]
-        keypoints_3d_predicted_relative = keypoints_3d_predicted - keypoints_3d_predicted[:, root_index:root_index + 1, :]
+        keypoints_gt_relative = keypoints_gt - keypoints_gt[:, -1:, :] # root index is -1 in spin+smpl
+        keypoints_3d_predicted_relative = keypoints_3d_predicted - keypoints_3d_predicted[:, -1:, :]
 
         per_pose_error_relative = np.sqrt(((keypoints_gt_relative - keypoints_3d_predicted_relative) ** 2).sum(2)).mean(1)
 

@@ -14,10 +14,10 @@ opt:
   n_objects_per_epoch: 15000
   n_epochs: 100
 
-  batch_size: 5
-  val_batch_size: 10
+  batch_size: 40
+  val_batch_size: 20
 
-  lr: 0.0001
+  lr: 0.001
   process_features_lr: 0.001
   volume_net_lr: 0.001
 
@@ -76,11 +76,12 @@ dataset:
     randomize_n_views: false
     min_n_views: null
     max_n_views: null
-    num_workers: 5
+    num_workers: 10
 
   val:
     h36m_root: "./data/human36m/processed/"
-    labels_path: "./data/human36m/extra/human36m-multiview-labels-GTbboxes.npy"
+    #labels_path: "./data/human36m/extra/human36m-multiview-labels-GTbboxes.npy"
+    labels_path: "./data/human36m/extra/human36m-multiview-smpl-labels-GTbboxes.npy"
     pred_results_path: "./data/pretrained/human36m/human36m_alg_10-04-2019/checkpoints/0060/results/val.pkl"
 
     with_damaged_actions: true
