@@ -159,7 +159,7 @@ def setup_experiment(config, args, model_name, is_train=True):
     experiment_title = prefix + experiment_title 
 
     experiment_name = '{}-{}'.format(experiment_title, datetime.now().strftime("%y%m%d-%H:%M")) +\
-                      f'-denorm={args.denorm_scale}-act={args.activation}-norm_raw={args.norm_raw_theta}-d={args.iknet_depth}-w={args.iknet_width}-decay={args.lr_decay}'
+                      f'-denorm:{args.denorm_scale}-act:{args.activation}-norm_raw:{args.norm_raw_theta}-d:{args.iknet_depth}-w:{args.iknet_width}-decay:{args.lr_decay}'
     print("Experiment name: {}".format(experiment_name))
 
     experiment_dir = os.path.join(args.logdir, experiment_name)
@@ -454,7 +454,7 @@ def main(args):
         print('training process')
         # train loop
         n_iters_total_train, n_iters_total_val = 0, 0
-        best_metric = 999.9
+        best_metric = 9990.9
         best_epoch = 0
         for epoch in range(config.opt.n_epochs):
             if train_sampler is not None:
@@ -480,7 +480,7 @@ def main(args):
                 print(f"Best case saved at {epoch}th epoch. scalar_metric:{scalar_metric}")
 
             print(f"{n_iters_total_train} iters done.")
-        print(f'best metric:{best_metric}, best epoch:{best_epoch}')
+        print(f'Best metric:{best_metric}, Best epoch:{best_epoch}')
     else:
         print('evaluation process')
         if args.eval_dataset == 'train':
