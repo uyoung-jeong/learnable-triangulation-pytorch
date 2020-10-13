@@ -276,7 +276,7 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                     denorm_loss = loss * 2 * denorm_keypoints
                     metric_dict['denorm_loss'].append(denorm_loss.item())
                 
-                if iter_i % config.vis_freq == 0:
+                if iter_i % (10 * config.vis_freq) == 0:
                     print('epoch:{}, step:{}, {}:{:.6f}, total_loss:{:.6f}, denorm_loss:{:.6f}'.format(
                                 epoch, iter_i, config.opt.criterion, metric_dict[f'{config.opt.criterion}'][-1], total_loss.item(), denorm_loss.item()))
 
@@ -330,7 +330,8 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
             results['indexes'] = np.concatenate(results['indexes'])
 
             try:
-                scalar_metric, full_metric = dataloader.dataset.evaluate(results['keypoints_3d'], keypoints_3d_binary_validity_gt)
+                scalar_metric, full_metric = dataloader.dataset.evaluate(results['keypoints_3d'],is_denorm=args.normalize_gt, denorm_scale=args.denorm_scale, 
+                                                                         keypoints_validity=keypoints_3d_binary_validity_gt)
             except Exception as e:
                 print("Failed to evaluate. Reason: ", e)
                 scalar_metric, full_metric = 0.0, {}

@@ -243,9 +243,12 @@ class Human36MMultiViewDataset(Dataset):
 
         return subject_scores
 
-    def evaluate(self, keypoints_3d_predicted, keypoints_validity=None, split_by_subject=False, transfer_cmu_to_human36m=False, transfer_human36m_to_human36m=False):
+    def evaluate(self, keypoints_3d_predicted, is_denorm=True, denorm_scale=3000, keypoints_validity=None, split_by_subject=False, transfer_cmu_to_human36m=False, transfer_human36m_to_human36m=False):
         keypoints_gt = self.labels['table']['keypoints_smpl'][:, :self.num_smpl_keypoints,:3]
-        keypoints_3d_predicted = keypoints_3d_predicted[:,25:,:] * 2 * 3000 - 3000 # denormalize
+
+        if is_denorm and denorm_scale != 1:
+            keypoints_3d_predicted = keypoints_3d_predicted[:,25:,:] * 2 * denorm_scale - denorm_scale # denormalize
+
         if keypoints_3d_predicted.shape != keypoints_gt.shape:
             raise ValueError(
                 '`keypoints_3d_predicted` shape should be %s, got %s' % \
