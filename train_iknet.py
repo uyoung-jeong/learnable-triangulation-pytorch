@@ -159,7 +159,7 @@ def setup_experiment(config, args, model_name, is_train=True):
     experiment_title = prefix + experiment_title 
 
     experiment_name = '{}-{}'.format(experiment_title, datetime.now().strftime("%y%m%d-%H:%M")) +\
-                      f'-denorm:{args.denorm_scale}-act:{args.activation}-norm_raw:{args.norm_raw_theta}-d:{args.iknet_depth}-w:{args.iknet_width}-decay:{args.lr_decay}'
+                      f'-norm_gt:{args.normalize_gt}-denorm:{args.denorm_scale}-act:{args.activation}-norm_raw:{args.norm_raw_theta}-d:{args.iknet_depth}-w:{args.iknet_width}-decay:{args.lr_decay}'
     print("Experiment name: {}".format(experiment_name))
 
     experiment_dir = os.path.join(args.logdir, experiment_name)
@@ -179,7 +179,7 @@ def setup_experiment(config, args, model_name, is_train=True):
     return experiment_dir, writer
 
 
-def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_iters_total=0, is_train=True, caption='', master=False, experiment_dir=None, writer=None, best_metric=999.9, scheduler=None):
+def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_iters_total=0, is_train=True, caption='', master=False, experiment_dir=None, writer=None, best_metric=9990.9, scheduler=None):
     name = "train" if is_train else "val"
     model_type = config.model.name
 
@@ -323,7 +323,7 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                     n_iters_total += 1
 
     # calculate evaluation metrics
-    comparative_metric = 999.9
+    comparative_metric = 9990.9
     if master:
         if not is_train:
             results['keypoints_3d'] = np.concatenate(results['keypoints_3d'], axis=0)
@@ -436,7 +436,7 @@ def main(args):
         """
 
     # lr scheduler
-    lr_scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda=lambda step: step * args.lr_decay)
+    lr_scheduler = torch.optim.lr_scheduler.MultiplicativeLR(opt, lr_lambda=lambda step: args.lr_decay)
 
     # datasets
     print("Loading data...")
