@@ -21,18 +21,14 @@ class Human36MMultiViewDataset(Dataset):
                  h36m_root='/Vol1/dbstore/datasets/Human3.6M/processed/',
                  labels_path='/Vol1/dbstore/datasets/Human3.6M/extra/human36m-multiview-labels-SSDbboxes.npy',
                  pred_results_path=None,
-                 image_shape=(256, 256),
                  train=False,
                  test=False,
+                 args=None,
+                 config=None,
                  retain_every_n_frames_in_test=1,
                  with_damaged_actions=False,
                  cuboid_side=2000.0,
-                 scale_bbox=1.5,
                  norm_image=True,
-                 kind="mpii",
-                 undistort_images=False,
-                 ignore_cameras=[],
-                 crop=True
                  ):
         """
             h36m_root:
@@ -58,14 +54,21 @@ class Human36MMultiViewDataset(Dataset):
 
         self.h36m_root = h36m_root
         self.labels_path = labels_path
-        self.image_shape = None if image_shape is None else tuple(image_shape)
-        self.scale_bbox = scale_bbox
         self.norm_image = norm_image
         self.cuboid_side = cuboid_side
-        self.kind = kind
-        self.undistort_images = undistort_images
-        self.ignore_cameras = ignore_cameras
-        self.crop = crop
+        self.load_image = load_image
+
+        self.args = args
+        self.config = config
+
+        self.load_image = args.eval or args.load_image
+
+        self.image_shape = config.image_shape if hasattr(config, "image_shape") else (256, 256)
+        self.scale_bbox = config.dataset.train.scale_bbox
+        self.kind = config.kind
+        self.undistort_images = config.dataset.train.undistort_images
+        self.ignore_cameras = config.dataset.train.ignore_cameras if hasattr(config.dataset.train, "ignore_cameras") else []
+        self.crop = config.dataset.train.crop if hasattr(config.dataset.train, "crop") else True
 
         self.labels = np.load(labels_path, allow_pickle=True).item()
 
@@ -125,53 +128,54 @@ class Human36MMultiViewDataset(Dataset):
         sample['subject'] = subject
         sample['action'] = action
 
-        """
-        for camera_idx, camera_name in enumerate(self.labels['camera_names']):
-            if camera_idx in self.ignore_cameras:
-                continue
 
-            # load bounding box
-            bbox = shot['bbox_by_camera_tlbr'][camera_idx][[1,0,3,2]] # TLBR to LTRB
-            bbox_height = bbox[2] - bbox[0]
-            if bbox_height == 0:
-                # convention: if the bbox is empty, then this view is missing
-                continue
 
-            # scale the bounding box
-            bbox = scale_bbox(bbox, self.scale_bbox)
+        if self.load_image:
+            for camera_idx, camera_name in enumerate(self.labels['camera_names']):
+                if camera_idx in self.ignore_cameras:
+                    continue
 
-            # load image
-            image_path = os.path.join(
-                self.h36m_root, subject, action, 'imageSequence' + '-undistorted' * self.undistort_images,
-                camera_name, 'img_%06d.jpg' % (frame_idx+1))
-            assert os.path.isfile(image_path), '%s doesn\'t exist' % image_path
-            image = cv2.imread(image_path)
+                # load bounding box
+                bbox = shot['bbox_by_camera_tlbr'][camera_idx][[1,0,3,2]] # TLBR to LTRB
+                bbox_height = bbox[2] - bbox[0]
+                if bbox_height == 0:
+                    # convention: if the bbox is empty, then this view is missing
+                    continue
 
-            # load camera
-            shot_camera = self.labels['cameras'][shot['subject_idx'], camera_idx]
-            retval_camera = Camera(shot_camera['R'], shot_camera['t'], shot_camera['K'], shot_camera['dist'], camera_name)
+                # scale the bounding box
+                bbox = scale_bbox(bbox, self.scale_bbox)
 
-            if self.crop:
-                # crop image
-                image = crop_image(image, bbox)
-                retval_camera.update_after_crop(bbox)
+                # load image
+                image_path = os.path.join(
+                    self.h36m_root, subject, action, 'imageSequence' + '-undistorted' * self.undistort_images,
+                    camera_name, 'img_%06d.jpg' % (frame_idx+1))
+                assert os.path.isfile(image_path), '%s doesn\'t exist' % image_path
+                image = cv2.imread(image_path)
 
-            if self.image_shape is not None:
-                # resize
-                image_shape_before_resize = image.shape[:2]
-                image = resize_image(image, self.image_shape)
-                retval_camera.update_after_resize(image_shape_before_resize, self.image_shape)
+                # load camera
+                shot_camera = self.labels['cameras'][shot['subject_idx'], camera_idx]
+                retval_camera = Camera(shot_camera['R'], shot_camera['t'], shot_camera['K'], shot_camera['dist'], camera_name)
 
-                sample['image_shapes_before_resize'].append(image_shape_before_resize)
+                if self.crop:
+                    # crop image
+                    image = crop_image(image, bbox)
+                    retval_camera.update_after_crop(bbox)
 
-            if self.norm_image:
-                image = normalize_image(image)
+                if self.image_shape is not None:
+                    # resize
+                    image_shape_before_resize = image.shape[:2]
+                    image = resize_image(image, self.image_shape)
+                    retval_camera.update_after_resize(image_shape_before_resize, self.image_shape)
 
-            sample['images'].append(image)
-            sample['detections'].append(bbox + (1.0,)) # TODO add real confidences
-            sample['cameras'].append(retval_camera)
-            sample['proj_matrices'].append(retval_camera.projection)
-        """
+                    sample['image_shapes_before_resize'].append(image_shape_before_resize)
+
+                if self.norm_image:
+                    image = normalize_image(image)
+
+                sample['images'].append(image)
+                sample['detections'].append(bbox + (1.0,)) # TODO add real confidences
+                sample['cameras'].append(retval_camera)
+                sample['proj_matrices'].append(retval_camera.projection)
 
         # 3D keypoints
         # add dummy confidences
@@ -259,7 +263,7 @@ class Human36MMultiViewDataset(Dataset):
         if keypoints_validity is not None:
             if len(keypoints_validity.shape)==3:
                 keypoints_validity = keypoints_validity[0].cpu().numpy()
-            
+
             keypoints_3d_predicted = np.multiply(keypoints_3d_predicted, keypoints_validity[np.newaxis,:,:])
 
         if transfer_cmu_to_human36m or transfer_human36m_to_human36m:

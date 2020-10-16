@@ -56,6 +56,8 @@ def parse_args():
 
     parser.add_argument("--logdir", type=str, default="logs", help="Path, where logs will be stored")
 
+    parser.add_argument('--load_image', action='store_true', help="If set, dataloader will return images")
+
     # training params
     parser.add_argument("--lr_decay", type=float, default=0.99, help='learning rate decay')
 
@@ -72,7 +74,7 @@ def parse_args():
     return args
 
 
-def setup_human36m_dataloaders(config, is_train, distributed_train):
+def setup_human36m_dataloaders(args, config, is_train, distributed_train):
     train_dataloader = None
     if is_train:
         # train
@@ -81,14 +83,10 @@ def setup_human36m_dataloaders(config, is_train, distributed_train):
             pred_results_path=config.dataset.train.pred_results_path if hasattr(config.dataset.train, "pred_results_path") else None,
             train=True,
             test=False,
-            image_shape=config.image_shape if hasattr(config, "image_shape") else (256, 256),
+            args=args,
+            config=config,
             labels_path=config.dataset.train.labels_path,
             with_damaged_actions=config.dataset.train.with_damaged_actions,
-            scale_bbox=config.dataset.train.scale_bbox,
-            kind=config.kind,
-            undistort_images=config.dataset.train.undistort_images,
-            ignore_cameras=config.dataset.train.ignore_cameras if hasattr(config.dataset.train, "ignore_cameras") else [],
-            crop=config.dataset.train.crop if hasattr(config.dataset.train, "crop") else True,
         )
 
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset) if distributed_train else None
@@ -113,15 +111,11 @@ def setup_human36m_dataloaders(config, is_train, distributed_train):
         pred_results_path=config.dataset.val.pred_results_path if hasattr(config.dataset.val, "pred_results_path") else None,
         train=False,
         test=True,
-        image_shape=config.image_shape if hasattr(config, "image_shape") else (256, 256),
+        args=args,
+        config=config,
         labels_path=config.dataset.val.labels_path,
         with_damaged_actions=config.dataset.val.with_damaged_actions,
         retain_every_n_frames_in_test=config.dataset.val.retain_every_n_frames_in_test,
-        scale_bbox=config.dataset.val.scale_bbox,
-        kind=config.kind,
-        undistort_images=config.dataset.val.undistort_images,
-        ignore_cameras=config.dataset.val.ignore_cameras if hasattr(config.dataset.val, "ignore_cameras") else [],
-        crop=config.dataset.val.crop if hasattr(config.dataset.val, "crop") else True,
     )
 
     val_dataloader = DataLoader(
@@ -139,9 +133,9 @@ def setup_human36m_dataloaders(config, is_train, distributed_train):
     return train_dataloader, val_dataloader, train_sampler
 
 
-def setup_dataloaders(config, is_train=True, distributed_train=False):
+def setup_dataloaders(args, config, is_train=True, distributed_train=False):
     if config.dataset.kind == 'human36m':
-        train_dataloader, val_dataloader, train_sampler = setup_human36m_dataloaders(config, is_train, distributed_train)
+        train_dataloader, val_dataloader, train_sampler = setup_human36m_dataloaders(args, config, is_train, distributed_train)
     else:
         raise NotImplementedError("Unknown dataset: {}".format(config.dataset.kind))
 
@@ -156,7 +150,7 @@ def setup_experiment(config, args, model_name, is_train=True):
     else:
         experiment_title = model_name
 
-    experiment_title = prefix + experiment_title 
+    experiment_title = prefix + experiment_title
 
     experiment_name = '{}-{}'.format(experiment_title, datetime.now().strftime("%y%m%d-%H:%M")) +\
                       f'-norm_gt:{args.normalize_gt}-denorm:{args.denorm_scale}-act:{args.activation}-norm_raw:{args.norm_raw_theta}-d:{args.iknet_depth}-w:{args.iknet_width}-decay:{args.lr_decay}'
@@ -217,12 +211,15 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                     print("Found None batch")
                     continue
 
-                #images_batch, keypoints_3d_gt, smpl_keypoints_3d_gt, keypoints_3d_validity_gt, smpl_keypoints_validity, proj_matricies_batch = dataset_utils.prepare_smpl_batch(batch, device, config)
-                keypoints_3d_gt, smpl_keypoints_3d_gt, keypoints_3d_validity_gt, smpl_keypoints_validity = dataset_utils.prepare_smpl_batch(batch, device, config)
+                images_batch, keypoints_3d_gt, smpl_keypoints_3d_gt, keypoints_3d_validity_gt, smpl_keypoints_validity, proj_matricies_batch = None, None, None, None, None, None
+                if args.eval or args.load_image:
+                    images_batch, keypoints_3d_gt, smpl_keypoints_3d_gt, keypoints_3d_validity_gt, smpl_keypoints_validity, proj_matricies_batch = dataset_utils.prepare_smpl_batch(batch, device, config)
+                else:
+                    keypoints_3d_gt, smpl_keypoints_3d_gt, keypoints_3d_validity_gt, smpl_keypoints_validity = dataset_utils.prepare_smpl_batch(batch, device, config)
 
                 #batch_size, n_views, image_shape = images_batch.shape[0], images_batch.shape[1], tuple(images_batch.shape[3:])
                 batch_size = keypoints_3d_gt.shape[0]
-                
+
                 # nomalize input
                 norm_keypoints_3d_gt = smpl_keypoints_3d_gt.clone()
                 if args.normalize_gt == 1:
@@ -275,7 +272,7 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                 if args.normalize_gt == 1:
                     denorm_loss = loss * 2 * denorm_keypoints
                     metric_dict['denorm_loss'].append(denorm_loss.item())
-                
+
                 if iter_i % (10 * config.vis_freq) == 0:
                     print('epoch:{}, step:{}, {}:{:.6f}, total_loss:{:.6f}, denorm_loss:{:.6f}'.format(
                                 epoch, iter_i, config.opt.criterion, metric_dict[f'{config.opt.criterion}'][-1], total_loss.item(), denorm_loss.item()))
@@ -303,6 +300,20 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
 
                 # plot visualization
                 if master:
+                    vis_kind = config.kind
+                    if (config.transfer_cmu_to_human36m if hasattr(config, "transfer_cmu_to_human36m") else False):
+                        vis_kind = "coco"
+
+                    for batch_i in range(min(batch_size, config.vis_n_elements)):
+                        keypoints_vis = vis.visualize_keypoint_only(
+                            images_batch, proj_matricies_batch,
+                            smpl_keypoints_3d_gt, keypoints_3d_pred,
+                            kind=vis_kind,
+                            batch_index=batch_i, size=5,
+                            max_n_cols=10
+                        )
+                        writer.add_image(f"{name}/keypoints_vis/{batch_i}", keypoints_vis.transpose(2, 0, 1), global_step=n_iters_total)
+
                     # dump to tensorboard per-iter loss/metric stats
                     if is_train:
                         for title, value in metric_dict.items():
@@ -330,7 +341,7 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
             results['indexes'] = np.concatenate(results['indexes'])
 
             try:
-                scalar_metric, full_metric = dataloader.dataset.evaluate(results['keypoints_3d'],is_denorm=args.normalize_gt, denorm_scale=args.denorm_scale, 
+                scalar_metric, full_metric = dataloader.dataset.evaluate(results['keypoints_3d'],is_denorm=args.normalize_gt, denorm_scale=args.denorm_scale,
                                                                          keypoints_validity=keypoints_3d_binary_validity_gt)
             except Exception as e:
                 print("Failed to evaluate. Reason: ", e)
@@ -440,7 +451,7 @@ def main(args):
 
     # datasets
     print("Loading data...")
-    train_dataloader, val_dataloader, train_sampler = setup_dataloaders(config, distributed_train=is_distributed)
+    train_dataloader, val_dataloader, train_sampler = setup_dataloaders(args, config, distributed_train=is_distributed)
 
     # experiment
     experiment_dir, writer = None, None

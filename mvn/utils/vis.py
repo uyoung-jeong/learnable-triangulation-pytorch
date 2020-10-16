@@ -178,6 +178,66 @@ def visualize_batch(images_batch, heatmaps_batch, keypoints_2d_batch, proj_matri
 
     return fig_image
 
+def visualize_keypoint_only(images_batch, proj_matricies_batch,
+                    keypoints_3d_batch_gt, keypoints_3d_batch_pred,
+                    kind="cmu",
+                    batch_index=0, size=5,
+                    max_n_cols=10,
+                    pred_kind=None
+                    ):
+    if pred_kind is None:
+        pred_kind = kind
+
+    n_views, n_joints = keypoints_3d_batch_gt.shape[1], keypoints_3d_batch_gt.shape[2]
+
+    n_rows = 3
+
+    n_cols = min(n_views, max_n_cols)
+    fig, axes = plt.subplots(ncols=n_cols, nrows=n_rows, figsize=(n_cols * size, n_rows * size))
+    axes = axes.reshape(n_rows, n_cols)
+
+    image_shape = images_batch.shape[3:]
+    heatmap_shape = heatmaps_batch.shape[3:]
+
+    row_i = 0
+
+    # images
+    axes[row_i, 0].set_ylabel("image", size='large')
+
+    images = image_batch_to_numpy(images_batch[batch_index])
+    images = denormalize_image(images).astype(np.uint8)
+    images = images[..., ::-1]  # bgr -> rgb
+
+    for view_i in range(n_cols):
+        axes[row_i][view_i].imshow(images[view_i])
+    row_i += 1
+
+    # 2D keypoints (gt projected)
+    axes[row_i, 0].set_ylabel("2d keypoints (gt projected)", size='large')
+
+    for view_i in range(n_cols):
+        axes[row_i][view_i].imshow(images[view_i])
+        keypoints_2d_gt_proj = project_3d_points_to_image_plane_without_distortion(proj_matricies_batch[batch_index, view_i].detach().cpu().numpy(), keypoints_3d_batch_gt[batch_index].detach().cpu().numpy())
+        draw_2d_pose(keypoints_2d_gt_proj, axes[row_i][view_i], kind=kind)
+    row_i += 1
+
+    # 2D keypoints (pred projected)
+    axes[row_i, 0].set_ylabel("2d keypoints (pred projected)", size='large')
+
+    for view_i in range(n_cols):
+        axes[row_i][view_i].imshow(images[view_i])
+        keypoints_2d_pred_proj = project_3d_points_to_image_plane_without_distortion(proj_matricies_batch[batch_index, view_i].detach().cpu().numpy(), keypoints_3d_batch_pred[batch_index].detach().cpu().numpy())
+        draw_2d_pose(keypoints_2d_pred_proj, axes[row_i][view_i], kind=pred_kind)
+    row_i += 1
+
+    fig.tight_layout()
+
+    fig_image = fig_to_array(fig)
+
+    plt.close('all')
+
+    return fig_image
+
 
 def visualize_heatmaps(images_batch, heatmaps_batch,
                        kind="cmu",
