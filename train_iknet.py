@@ -70,7 +70,7 @@ def parse_args():
 
     parser.add_argument('--activation', type=str, default='Sigmoid', help='activation function of IKNet')
     parser.add_argument('--norm_raw_theta', type=int, default=0, help='1: perform normalization using norm of theta_raw. 0: no normalization inside iknet')
-    parser.add_argument('--denorm_scale', type=int, default=3000, help='keypoint denorm scale')
+    parser.add_argument('--denorm_scale', type=int, default=1000, help='keypoint denorm scale')
     parser.add_argument('--normalize_gt', type=int, default=1, help='1: normalize gt keypoints. assume that pred is normalized in same scale')
     parser.add_argument('--align_by_pelvis', type=int, default=1, help='1: align gt and pred keypoints by pelvis when computing loss.')
     parser.add_argument('--batchnorm', type=int, default=1, help='1: apply batchnorm')
@@ -225,11 +225,10 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                 #batch_size, n_views, image_shape = images_batch.shape[0], images_batch.shape[1], tuple(images_batch.shape[3:])
                 batch_size = keypoints_3d_gt.shape[0]
 
-                # nomalize input
+                # nomalize input keypoints, following SPIN preprocessing steps
                 norm_keypoints_3d_gt = smpl_keypoints_3d_gt.clone()
                 if args.normalize_gt == 1:
-                    norm_keypoints_3d_gt = torch.div((smpl_keypoints_3d_gt + denorm_keypoints), 2*denorm_keypoints) # nonnegative domain
-                    #norm_keypoints_3d_gt = torch.div(smpl_keypoints_3d_gt, denorm_keypoints) # allow negative input
+                    norm_keypoints_3d_gt = torch.div(smpl_keypoints_3d_gt, denorm_keypoints) # allow negative input
 
                 pred_quaternion = model(norm_keypoints_3d_gt) # feed with normalized 3d keypoints
                 # pred_quaternion.shape: [5, 24, 4]
@@ -256,13 +255,13 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
 
                 keypoints_3d_binary_validity_gt = (smpl_keypoints_validity > 0.0).type(torch.float32)
 
-                if args.align_by_pelvis > 0:
+                if args.align_by_pelvis > 0: # subtract by the base joint
                     # align by hips
-                    #gt_pelvis = (norm_keypoints_3d_gt[:,2,:] + norm_keypoints_3d_gt[:,3,:])/2
-                    gt_pelvis = norm_keypoints_3d_gt[:,-1,:]
+                    gt_pelvis = norm_keypoints_3d_gt[:, 0, :]
                     norm_keypoints_3d_gt = norm_keypoints_3d_gt - gt_pelvis[:,None,:]
 
-                    norm_keypoints_3d_pred = keypoints_3d_pred - gt_pelvis[:,None,:]
+                    pred_pelvis = keypoints_3d_pred[:, 0, :]
+                    norm_keypoints_3d_pred = keypoints_3d_pred - pred_pelvis[:,None,:]
 
                 # calculate loss
                 total_loss = 0.0

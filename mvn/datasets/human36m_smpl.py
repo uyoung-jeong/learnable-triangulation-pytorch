@@ -251,7 +251,7 @@ class Human36MMultiViewDataset(Dataset):
 
         keypoints_3d_predicted = keypoints_3d_predicted[:,25:,:]
         if is_denorm and denorm_scale != 1:
-            keypoints_3d_predicted = keypoints_3d_predicted * 2 * denorm_scale - denorm_scale # denormalize
+            keypoints_3d_predicted = keypoints_3d_predicted * denorm_scale # denormalize
 
         if keypoints_3d_predicted.shape != keypoints_gt.shape:
             raise ValueError(
