@@ -47,25 +47,21 @@ def make_smpl_collate_fn(randomize_n_views=True, min_n_views=10, max_n_views=31)
             return None
 
         batch = dict()
-        """
-        total_n_views = min(len(item['images']) for item in items)
+        if 'images' in items[0].keys():
+            total_n_views = min(len(item['images']) for item in items)
 
-        indexes = np.arange(total_n_views)
-        if randomize_n_views:
-            n_views = np.random.randint(min_n_views, min(total_n_views, max_n_views) + 1)
-            indexes = np.random.choice(np.arange(total_n_views), size=n_views, replace=False)
-        else:
             indexes = np.arange(total_n_views)
+            if randomize_n_views:
+                n_views = np.random.randint(min_n_views, min(total_n_views, max_n_views) + 1)
+                indexes = np.random.choice(np.arange(total_n_views), size=n_views, replace=False)
+            else:
+                indexes = np.arange(total_n_views)
+            batch['images'] = np.stack([np.stack([item['images'][i] for item in items], axis=0) for i in indexes], axis=0).swapaxes(0, 1)
+            batch['detections'] = np.array([[item['detections'][i] for item in items] for i in indexes]).swapaxes(0, 1)
+            batch['cameras'] = [[item['cameras'][i] for item in items] for i in indexes]
 
-        """
         batch['subject'] = [item['subject'] for item in items]
         batch['action'] = [item['action'] for item in items]
-
-        """
-        batch['images'] = np.stack([np.stack([item['images'][i] for item in items], axis=0) for i in indexes], axis=0).swapaxes(0, 1)
-        batch['detections'] = np.array([[item['detections'][i] for item in items] for i in indexes]).swapaxes(0, 1)
-        batch['cameras'] = [[item['cameras'][i] for item in items] for i in indexes]
-        """
 
         batch['keypoints_3d'] = [item['keypoints_3d'] for item in items]
         batch['smpl_keypoints_3d'] = [item['smpl_keypoints_3d'] for item in items]
@@ -120,14 +116,14 @@ def prepare_smpl_batch(batch, device, config, is_train=True):
     smpl_keypoints_3d_validity = torch.from_numpy(np.stack(batch['smpl_keypoints_3d'], axis=0)[:,:,3:]).float().to(device)
 
     if 'images' in batch.keys():
-            # images
-            images_batch = []
-            for image_batch in batch['images']:
-                image_batch = image_batch_to_torch(image_batch)
-                image_batch = image_batch.to(device)
-                images_batch.append(image_batch)
+        # images
+        images_batch = []
+        for image_batch in batch['images']:
+            image_batch = image_batch_to_torch(image_batch)
+            image_batch = image_batch.to(device)
+            images_batch.append(image_batch)
 
-            images_batch = torch.stack(images_batch, dim=0)
+        images_batch = torch.stack(images_batch, dim=0)
 
         # projection matricies
         proj_matricies_batch = torch.stack([torch.stack([torch.from_numpy(camera.projection) for camera in camera_batch], dim=0) for camera_batch in batch['cameras']], dim=0).transpose(1, 0)  # shape (batch_size, n_views, 3, 4)

@@ -188,7 +188,7 @@ def visualize_keypoint_only(images_batch, proj_matricies_batch,
     if pred_kind is None:
         pred_kind = kind
 
-    n_views, n_joints = keypoints_3d_batch_gt.shape[1], keypoints_3d_batch_gt.shape[2]
+    n_views, n_joints = images_batch.shape[1], keypoints_3d_batch_gt.shape[1]
 
     n_rows = 3
 
@@ -197,7 +197,6 @@ def visualize_keypoint_only(images_batch, proj_matricies_batch,
     axes = axes.reshape(n_rows, n_cols)
 
     image_shape = images_batch.shape[3:]
-    heatmap_shape = heatmaps_batch.shape[3:]
 
     row_i = 0
 
@@ -218,7 +217,7 @@ def visualize_keypoint_only(images_batch, proj_matricies_batch,
     for view_i in range(n_cols):
         axes[row_i][view_i].imshow(images[view_i])
         keypoints_2d_gt_proj = project_3d_points_to_image_plane_without_distortion(proj_matricies_batch[batch_index, view_i].detach().cpu().numpy(), keypoints_3d_batch_gt[batch_index].detach().cpu().numpy())
-        draw_2d_pose(keypoints_2d_gt_proj, axes[row_i][view_i], kind=kind)
+        draw_2d_pose(keypoints_2d_gt_proj, axes[row_i][view_i], kind=kind, no_connection=True)
     row_i += 1
 
     # 2D keypoints (pred projected)
@@ -227,7 +226,7 @@ def visualize_keypoint_only(images_batch, proj_matricies_batch,
     for view_i in range(n_cols):
         axes[row_i][view_i].imshow(images[view_i])
         keypoints_2d_pred_proj = project_3d_points_to_image_plane_without_distortion(proj_matricies_batch[batch_index, view_i].detach().cpu().numpy(), keypoints_3d_batch_pred[batch_index].detach().cpu().numpy())
-        draw_2d_pose(keypoints_2d_pred_proj, axes[row_i][view_i], kind=pred_kind)
+        draw_2d_pose(keypoints_2d_pred_proj, axes[row_i][view_i], kind=pred_kind, no_connection=True)
     row_i += 1
 
     fig.tight_layout()
@@ -324,7 +323,7 @@ def visualize_volumes(images_batch, volumes_batch, proj_matricies_batch,
     return fig_image
 
 
-def draw_2d_pose(keypoints, ax, kind='cmu', keypoints_mask=None, point_size=2, line_width=1, radius=None, color=None):
+def draw_2d_pose(keypoints, ax, kind='cmu', keypoints_mask=None, point_size=2, line_width=1, radius=None, color=None, no_connection=False):
     """
     Visualizes a 2d skeleton
 
@@ -342,11 +341,12 @@ def draw_2d_pose(keypoints, ax, kind='cmu', keypoints_mask=None, point_size=2, l
     # points
     ax.scatter(keypoints[keypoints_mask][:, 0], keypoints[keypoints_mask][:, 1], c='red', s=point_size)
 
-    # connections
-    for (index_from, index_to) in connectivity:
-        if keypoints_mask[index_from] and keypoints_mask[index_to]:
-            xs, ys = [np.array([keypoints[index_from, j], keypoints[index_to, j]]) for j in range(2)]
-            ax.plot(xs, ys, c=color, lw=line_width)
+    if not no_connection:
+        # connections
+        for (index_from, index_to) in connectivity:
+            if keypoints_mask[index_from] and keypoints_mask[index_to]:
+                xs, ys = [np.array([keypoints[index_from, j], keypoints[index_to, j]]) for j in range(2)]
+                ax.plot(xs, ys, c=color, lw=line_width)
 
     if radius is not None:
         root_keypoint_index = 0

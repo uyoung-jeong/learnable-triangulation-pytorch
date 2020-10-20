@@ -12,7 +12,7 @@ opt:
   volumetric_ce_loss_weight: 0.01
 
   n_objects_per_epoch: 15000
-  n_epochs: 100
+  n_epochs: 40
 
   batch_size: 40
   val_batch_size: 20

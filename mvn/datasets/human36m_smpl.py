@@ -50,13 +50,12 @@ class Human36MMultiViewDataset(Dataset):
         """
         assert train or test, '`Human36MMultiViewDataset` must be constructed with at least ' \
                               'one of `test=True` / `train=True`'
-        assert kind in ("mpii", "human36m", "smpl")
+        assert config.kind in ("mpii", "human36m", "smpl")
 
         self.h36m_root = h36m_root
         self.labels_path = labels_path
         self.norm_image = norm_image
         self.cuboid_side = cuboid_side
-        self.load_image = load_image
 
         self.args = args
         self.config = config
@@ -101,7 +100,7 @@ class Human36MMultiViewDataset(Dataset):
 
         self.labels['table'] = self.labels['table'][np.concatenate(indices)]
 
-        self.num_keypoints = 16 if kind == "mpii" else 17
+        self.num_keypoints = 16 if config.kind == "mpii" else 17
         self.num_smpl_keypoints = 24
         assert self.labels['table']['keypoints'].shape[1] == 17, "Use a newer 'labels' file"
 

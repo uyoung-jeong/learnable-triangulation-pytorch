@@ -1,6 +1,7 @@
 # This scrip assumes that keypoints_3d_gt follows smplx format
 # You need to have human36m-multiview-smpl-labels-GTbboxes.npy for correct running
 import os
+from os import path
 import shutil
 import argparse
 import time
@@ -55,6 +56,8 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
 
     parser.add_argument("--logdir", type=str, default="logs", help="Path, where logs will be stored")
+    parser.add_argument("--checkpoint", type=str, default='',
+                        help="specify checkpoint of triangulation network for evaluation. This argument overwrites config.model.checkpoint")
 
     parser.add_argument('--load_image', action='store_true', help="If set, dataloader will return images")
 
@@ -69,6 +72,8 @@ def parse_args():
     parser.add_argument('--norm_raw_theta', type=int, default=0, help='1: perform normalization using norm of theta_raw. 0: no normalization inside iknet')
     parser.add_argument('--denorm_scale', type=int, default=3000, help='keypoint denorm scale')
     parser.add_argument('--normalize_gt', type=int, default=1, help='1: normalize gt keypoints. assume that pred is normalized in same scale')
+    parser.add_argument('--align_by_pelvis', type=int, default=1, help='1: align gt and pred keypoints by pelvis when computing loss.')
+    parser.add_argument('--batchnorm', type=int, default=1, help='1: apply batchnorm')
 
     args = parser.parse_args()
     return args
@@ -251,11 +256,13 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
 
                 keypoints_3d_binary_validity_gt = (smpl_keypoints_validity > 0.0).type(torch.float32)
 
-                # align by hips
-                gt_pelvis = (norm_keypoints_3d_gt[:,2,:] + norm_keypoints_3d_gt[:,3,:])/2
-                norm_keypoints_3d_gt = norm_keypoints_3d_gt - gt_pelvis[:,None,:]
+                if args.align_by_pelvis > 0:
+                    # align by hips
+                    #gt_pelvis = (norm_keypoints_3d_gt[:,2,:] + norm_keypoints_3d_gt[:,3,:])/2
+                    gt_pelvis = norm_keypoints_3d_gt[:,-1,:]
+                    norm_keypoints_3d_gt = norm_keypoints_3d_gt - gt_pelvis[:,None,:]
 
-                norm_keypoints_3d_pred = keypoints_3d_pred - gt_pelvis[:,None,:]
+                    norm_keypoints_3d_pred = keypoints_3d_pred - gt_pelvis[:,None,:]
 
                 # calculate loss
                 total_loss = 0.0
@@ -271,7 +278,7 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                 denorm_loss = loss
                 if args.normalize_gt == 1:
                     denorm_loss = loss * 2 * denorm_keypoints
-                    metric_dict['denorm_loss'].append(denorm_loss.item())
+                metric_dict['denorm_loss'].append(denorm_loss.item())
 
                 if iter_i % (10 * config.vis_freq) == 0:
                     print('epoch:{}, step:{}, {}:{:.6f}, total_loss:{:.6f}, denorm_loss:{:.6f}'.format(
@@ -299,20 +306,26 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                     results['indexes'].append(batch['indexes'])
 
                 # plot visualization
-                if master:
+                if master and iter_i % config.vis_freq == 0:
                     vis_kind = config.kind
                     if (config.transfer_cmu_to_human36m if hasattr(config, "transfer_cmu_to_human36m") else False):
                         vis_kind = "coco"
 
-                    for batch_i in range(min(batch_size, config.vis_n_elements)):
-                        keypoints_vis = vis.visualize_keypoint_only(
-                            images_batch, proj_matricies_batch,
-                            smpl_keypoints_3d_gt, keypoints_3d_pred,
-                            kind=vis_kind,
-                            batch_index=batch_i, size=5,
-                            max_n_cols=10
-                        )
-                        writer.add_image(f"{name}/keypoints_vis/{batch_i}", keypoints_vis.transpose(2, 0, 1), global_step=n_iters_total)
+                    if args.eval or args.load_image:
+                        checkpoint_dir = os.path.join(experiment_dir, 'checkpoints', '{:04}'.format(epoch))
+                        if not os.path.isdir(os.path.join(checkpoint_dir, 'keypoint')):
+                            os.makedirs(os.path.join(checkpoint_dir, 'keypoint'))
+
+                        for batch_i in range(min(batch_size, config.vis_n_elements)):
+                            keypoints_vis = vis.visualize_keypoint_only(
+                                images_batch, proj_matricies_batch,
+                                smpl_keypoints_3d_gt, keypoints_3d_pred,
+                                kind=vis_kind,
+                                batch_index=batch_i, size=5,
+                                max_n_cols=10
+                            )
+                            writer.add_image(f"{name}/keypoints_vis/{batch_i}", keypoints_vis.transpose(2, 0, 1), global_step=n_iters_total)
+                            cv2.imwrite(os.path.join(checkpoint_dir, 'keypoint', '{:06}_{:06}.png'.format(iter_i, batch_i)), cv2.cvtColor(keypoints_vis, cv2.COLOR_BGR2RGB))
 
                     # dump to tensorboard per-iter loss/metric stats
                     if is_train:
@@ -403,6 +416,9 @@ def main(args):
     config = cfg.load_config(args.config)
     config.opt.n_iters_per_epoch = config.opt.n_objects_per_epoch // config.opt.batch_size
 
+    if args.checkpoint != '':
+        config.model.checkpoint = args.checkpoint
+
     model = IKNet_Baseline(args, config, device=device).to(device)
     print(model)
 
@@ -492,6 +508,7 @@ def main(args):
                 print(f"Best case saved at {epoch}th epoch. scalar_metric:{scalar_metric}")
 
             print(f"{n_iters_total_train} iters done.")
+        print(f'Result of {experiment_dir}')
         print(f'Best metric:{best_metric}, Best epoch:{best_epoch}')
     else:
         print('evaluation process')

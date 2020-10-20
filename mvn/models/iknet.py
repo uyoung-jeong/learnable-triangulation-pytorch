@@ -32,7 +32,8 @@ class IKNet_Baseline(nn.Module):
         layers = []
         for i in range(self.depth):
             layers.append(nn.Linear(in_features=in_features, out_features=self.widths))
-            layers.append(nn.BatchNorm1d(num_features=self.widths))
+            if args.batchnorm == 1:
+                layers.append(nn.BatchNorm1d(num_features=self.widths))
             
             activation_type = args.activation.lower()
             if activation_type == 'leakyrelu':
@@ -51,7 +52,7 @@ class IKNet_Baseline(nn.Module):
 
         self.theta_raw_layer = nn.Linear(in_features=self.widths, out_features=self.output_size)
 
-        self.init_weights(pretrained_path='')
+        self.init_weights(pretrained_path=config.model.checkpoint)
 
     # keypoints_3d: [batch_size, n_joints, 3]
     # theta: quaternion format
@@ -77,8 +78,9 @@ class IKNet_Baseline(nn.Module):
 
     def init_weights(self, pretrained_path=''):
         if pretrained_path != '':
-            print("ERROR: pretrained model loading is not implemented")
-            exit()
+            pretrained_dict = torch.load(pretrained_path)
+            self.load_state_dict(pretrained_dict, strict=True)
+            print("Successfully loaded pretrained weights of IKNet_Baseline")
 
         for m in self.modules():
             if isinstance(m, nn.Linear):
