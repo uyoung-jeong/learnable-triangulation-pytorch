@@ -113,6 +113,14 @@ class Human36MMultiViewDataset(Dataset):
                 f"[train={train}, test={test}] {labels_path} has {len(self)} samples, but '{pred_results_path}' " + \
                 f"has {len(self.keypoints_3d_pred)}. Did you follow all preprocessing instructions carefully?"
 
+        """
+        # cut dataset length to 3200
+        if train:
+            self.labels['table'] = self.labels['table'][:3200]
+            print('cut dataset length to 3200')
+        """
+
+
     def __len__(self):
         return len(self.labels['table'])
 
@@ -198,6 +206,7 @@ class Human36MMultiViewDataset(Dataset):
             sample['pred_keypoints_3d'] = self.keypoints_3d_pred[idx]
 
         sample.default_factory = None
+
         return sample
 
     def evaluate_using_per_pose_error(self, per_pose_error, split_by_subject):
@@ -246,12 +255,12 @@ class Human36MMultiViewDataset(Dataset):
 
         return subject_scores
 
+    # keypoints_3d_predicted: denormalized input
+    # keypoints_gt: denormalized input
     def evaluate(self, keypoints_3d_predicted, is_denorm=True, denorm_scale=3000, keypoints_validity=None, split_by_subject=False, transfer_cmu_to_human36m=False, transfer_human36m_to_human36m=False):
         keypoints_gt = self.labels['table']['keypoints_smpl'][:, :self.num_smpl_keypoints,:3]
 
         keypoints_3d_predicted = keypoints_3d_predicted[:,25:,:]
-        if is_denorm and denorm_scale != 1:
-            keypoints_3d_predicted = keypoints_3d_predicted * denorm_scale # denormalize
 
         if keypoints_3d_predicted.shape != keypoints_gt.shape:
             raise ValueError(

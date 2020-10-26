@@ -249,6 +249,7 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                 smpl_output = smpl(betas=dummy_betas.to(device), body_pose=pred_rotmats[:,1:], global_orient=pred_rotmats[:,0].unsqueeze(1), pose2rot=False)
                 #smpl_output = torch.stack([smpl(betas=dummy_betas.to(device), body_pose=mat[:,1:], global_orient=mat[:,0].unsqueeze(1), pose2rot=False) for mat in pred_rotmats])
                 keypoints_3d_pred = smpl_output.joints # [5, 49, 3]
+                denorm_keypoints_3d_pred = keypoints_3d_pred * args.denorm_scale if args.normalize_gt else keypoints_3d_pred
 
 
                 n_joints = keypoints_3d_pred.shape[1]
@@ -301,11 +302,11 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
 
                 # save answers for evalulation
                 if not is_train:
-                    results['keypoints_3d'].append(keypoints_3d_pred.detach().cpu().numpy())
+                    results['keypoints_3d'].append(denorm_keypoints_3d_pred.detach().cpu().numpy())
                     results['indexes'].append(batch['indexes'])
 
                 # plot visualization
-                if master and iter_i % config.vis_freq == 0:
+                if master and (iter_i % config.vis_freq == 0):
                     vis_kind = config.kind
                     if (config.transfer_cmu_to_human36m if hasattr(config, "transfer_cmu_to_human36m") else False):
                         vis_kind = "coco"
@@ -318,13 +319,22 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                         for batch_i in range(min(batch_size, config.vis_n_elements)):
                             keypoints_vis = vis.visualize_keypoint_only(
                                 images_batch, proj_matricies_batch,
-                                smpl_keypoints_3d_gt, keypoints_3d_pred,
+                                smpl_keypoints_3d_gt, denorm_keypoints_3d_pred,
                                 kind=vis_kind,
                                 batch_index=batch_i, size=5,
                                 max_n_cols=10
                             )
                             writer.add_image(f"{name}/keypoints_vis/{batch_i}", keypoints_vis.transpose(2, 0, 1), global_step=n_iters_total)
                             cv2.imwrite(os.path.join(checkpoint_dir, 'keypoint', '{:06}_{:06}.png'.format(iter_i, batch_i)), cv2.cvtColor(keypoints_vis, cv2.COLOR_BGR2RGB))
+                            
+                            input_keypoints_vis = vis.visualize_keypoint_only(
+                                images_batch, proj_matricies_batch,
+                                norm_keypoints_3d_gt * args.denorm_scale, denorm_keypoints_3d_pred,
+                                kind=vis_kind,
+                                batch_index=batch_i, size=5,
+                                max_n_cols=10
+                            )
+                            cv2.imwrite(os.path.join(checkpoint_dir, 'keypoint', '{:06}_{:06}_input_denorm.png'.format(iter_i, batch_i)), cv2.cvtColor(keypoints_vis, cv2.COLOR_BGR2RGB))
 
                     # dump to tensorboard per-iter loss/metric stats
                     if is_train:
