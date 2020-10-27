@@ -256,6 +256,7 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
 
                 keypoints_3d_binary_validity_gt = (smpl_keypoints_validity > 0.0).type(torch.float32)
 
+                norm_keypoints_3d_pred = keypoints_3d_pred
                 if args.align_by_pelvis > 0: # subtract by the base joint
                     # align by hips
                     gt_pelvis = norm_keypoints_3d_gt[:, 0, :]
