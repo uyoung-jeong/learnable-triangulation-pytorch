@@ -327,15 +327,6 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                             )
                             writer.add_image(f"{name}/keypoints_vis/{batch_i}", keypoints_vis.transpose(2, 0, 1), global_step=n_iters_total)
                             cv2.imwrite(os.path.join(checkpoint_dir, 'keypoint', '{:06}_{:06}.png'.format(iter_i, batch_i)), cv2.cvtColor(keypoints_vis, cv2.COLOR_BGR2RGB))
-                            
-                            input_keypoints_vis = vis.visualize_keypoint_only(
-                                images_batch, proj_matricies_batch,
-                                norm_keypoints_3d_gt * args.denorm_scale, denorm_keypoints_3d_pred,
-                                kind=vis_kind,
-                                batch_index=batch_i, size=5,
-                                max_n_cols=10
-                            )
-                            cv2.imwrite(os.path.join(checkpoint_dir, 'keypoint', '{:06}_{:06}_input_denorm.png'.format(iter_i, batch_i)), cv2.cvtColor(keypoints_vis, cv2.COLOR_BGR2RGB))
 
                     # dump to tensorboard per-iter loss/metric stats
                     if is_train:
