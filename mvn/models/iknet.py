@@ -26,7 +26,8 @@ class IKNet_Baseline(nn.Module):
         self.depth = args.iknet_depth
         self.widths = args.iknet_width
         self.in_features = self.num_joints * 3 # initial input size of the model
-        self.output_size = self.num_joints * 4
+        self.angle_dim = 4 if args.output_type == 'quaternion' else 6
+        self.output_size = self.num_joints * self.angle_dim
 
         in_features = self.in_features
         layers = []
@@ -63,7 +64,7 @@ class IKNet_Baseline(nn.Module):
 
         x = self.feature_layers(x)
         theta_raw = self.theta_raw_layer(x)
-        theta_raw = torch.reshape(theta_raw, (-1, self.num_joints, 4))
+        theta_raw = torch.reshape(theta_raw, (-1, self.num_joints, self.angle_dim))
 
         if self.args.norm_raw_theta == 1:
             eps = torch.zeros((*theta_raw.shape[:2], 1)) + torch.finfo(torch.float32).eps
