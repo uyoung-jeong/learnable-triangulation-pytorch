@@ -328,9 +328,9 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                     if smpl_output is not None:
                         if len(smpl_output.vertices.shape) == 3:
                             for batch_i, verts in enumerate(smpl_output.vertices):
-                                smpl.output_mesh(os.path.join(checkpoint_dir, 'mesh', '{:06_{:06}.obj}'.format(iter_i, batch_i)), verts)
+                                smpl.output_mesh(os.path.join(checkpoint_dir, 'mesh', '{:06}_{:06}.obj'.format(iter_i, batch_i)), verts)
                         else:
-                            smpl.output_mesh(os.path.join(checkpoint_dir, 'mesh', '{:06_{:06}.obj}'.format(iter_i, 0)), smpl_output.vertices)
+                            smpl.output_mesh(os.path.join(checkpoint_dir, 'mesh', '{:06}_{:06}.obj'.format(iter_i, 0)), smpl_output.vertices)
 
                     if args.eval or args.load_image:
                         if not os.path.isdir(os.path.join(checkpoint_dir, 'keypoint')):

@@ -40,4 +40,4 @@ class SMPL(_SMPL):
             for v in verts:
                 fp.write('v %f %f %f\n' % (v[0], v[1], v[2]));
             for f in self.faces + 1: # +1: add 1 to every element
-                fp.write('f %d %d %d\n' % (f[0], f[1], f[22]));
+                fp.write('f %d %d %d\n' % (f[0], f[1], f[2]));
