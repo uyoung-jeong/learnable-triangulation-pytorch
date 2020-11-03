@@ -212,7 +212,8 @@ def visualize_keypoint_only(images_batch, proj_matricies_batch,
     row_i += 1
 
     # 'w': base joint, 'blue': left legs, 'green':right legs, 'yellow': torso, 'red': left arms, 'cyan':right arms
-    colors = ['w', 'b', 'g', 'y', 'b', 'g', 'y', 'b', 'g', 'y', 'b', 'g', 'y', 'y', 'y', 'y', 'r', 'c', 'r', 'c', 'r', 'c', 'r', 'c']
+    #colors = ['b', 'b', 'b', 'g', 'g', 'g', 'w', 'r', 'r', 'r', 'c', 'c', 'c', 'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y', 'y']
+    colors = ['g', 'g', 'g', 'b', 'b', 'b', 'c', 'c', 'c', 'r', 'r', 'r', 'y', 'y', 'y', 'y', 'y', 'y', 'y', 'k', 'k', 'k', 'k', 'k']
 
     # 2D keypoints (gt projected)
     axes[row_i, 0].set_ylabel("2d keypoints (gt projected)", size='large')
@@ -229,7 +230,7 @@ def visualize_keypoint_only(images_batch, proj_matricies_batch,
     for view_i in range(n_cols):
         axes[row_i][view_i].imshow(images[view_i])
         keypoints_2d_pred_proj = project_3d_points_to_image_plane_without_distortion(proj_matricies_batch[batch_index, view_i].detach().cpu().numpy(), keypoints_3d_batch_pred[batch_index].detach().cpu().numpy())
-        draw_2d_pose(keypoints_2d_pred_proj, axes[row_i][view_i], kind=pred_kind, no_connection=True)
+        draw_2d_pose(keypoints_2d_pred_proj, axes[row_i][view_i], kind=pred_kind, no_connection=True, color=colors)
     row_i += 1
 
     fig.tight_layout()
@@ -342,7 +343,8 @@ def draw_2d_pose(keypoints, ax, kind='cmu', keypoints_mask=None, point_size=2, l
         keypoints_mask = [True] * len(keypoints)
 
     # points
-    ax.scatter(keypoints[keypoints_mask][:, 0], keypoints[keypoints_mask][:, 1], c='red', s=point_size)
+    _c = 'red' if color == 'blue' else color
+    ax.scatter(keypoints[keypoints_mask][:, 0], keypoints[keypoints_mask][:, 1], c=_c, s=point_size)
 
     if not no_connection:
         # connections

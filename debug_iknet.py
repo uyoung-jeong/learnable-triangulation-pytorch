@@ -339,7 +339,7 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                         for batch_i in range(min(batch_size, config.vis_n_elements)):
                             keypoints_vis = vis.visualize_keypoint_only(
                                 images_batch, proj_matricies_batch,
-                                smpl_keypoints_3d_gt, denorm_keypoints_3d_pred,
+                                smpl_keypoints_3d_gt, denorm_keypoints_3d_pred[:,25:,:],
                                 kind=vis_kind,
                                 batch_index=batch_i, size=5,
                                 max_n_cols=10
