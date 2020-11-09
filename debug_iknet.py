@@ -314,7 +314,7 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                     results['indexes'].append(batch['indexes'])
 
                 # plot visualization
-                if master: # and (iter_i % config.vis_freq == 0):
+                if master and iter_i % 10 == 0: # and (iter_i % config.vis_freq == 0):
                     vis_kind = config.kind
                     if (config.transfer_cmu_to_human36m if hasattr(config, "transfer_cmu_to_human36m") else False):
                         vis_kind = "coco"
