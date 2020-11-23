@@ -260,7 +260,12 @@ class Human36MMultiViewDataset(Dataset):
     def evaluate(self, keypoints_3d_predicted, is_denorm=True, denorm_scale=3000, keypoints_validity=None, split_by_subject=False, transfer_cmu_to_human36m=False, transfer_human36m_to_human36m=False):
         keypoints_gt = self.labels['table']['keypoints_smpl'][:, :self.num_smpl_keypoints,:3]
 
-        keypoints_3d_predicted = keypoints_3d_predicted[:,25:,:]
+        if keypoints_3d_predicted.shape[1] == 49:
+            keypoints_3d_predicted = keypoints_3d_predicted[:,25:,:]
+        else:
+            print(f'keypoints_3d_pred.shape:{keypoints_3d_predicted.shape}')
+            print(f'keypoints_gt.shape:{keypoints_gt.shape}')
+            exit()
 
         if keypoints_3d_predicted.shape != keypoints_gt.shape:
             raise ValueError(
@@ -284,7 +289,6 @@ class Human36MMultiViewDataset(Dataset):
             keypoints_gt = keypoints_gt[:, human36m_joints]
             keypoints_3d_predicted = keypoints_3d_predicted[:, cmu_joints]
 
-
         # mean error per 16/17 joints in mm, for each pose
         per_pose_error = np.sqrt(((keypoints_gt - keypoints_3d_predicted) ** 2).sum(2)).mean(1)
 
@@ -294,8 +298,10 @@ class Human36MMultiViewDataset(Dataset):
         else:
             root_index = 0
 
-        keypoints_gt_relative = keypoints_gt - keypoints_gt[:, -1:, :] # root index is -1 in spin+smpl
-        keypoints_3d_predicted_relative = keypoints_3d_predicted - keypoints_3d_predicted[:, -1:, :]
+        gt_base = keypoints_gt[:, root_index, :]
+        keypoints_gt_relative = keypoints_gt - gt_base[:, None, :] # root index is -1 in spin+smpl
+        pred_base = keypoints_3d_predicted[:, root_index, :]
+        keypoints_3d_predicted_relative = keypoints_3d_predicted - pred_base[:, None, :]
 
         per_pose_error_relative = np.sqrt(((keypoints_gt_relative - keypoints_3d_predicted_relative) ** 2).sum(2)).mean(1)
 

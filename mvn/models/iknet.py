@@ -38,9 +38,9 @@ class IKNet_Baseline(nn.Module):
             
             activation_type = args.activation.lower()
             if activation_type == 'leakyrelu':
-                layers.append(nn.LeakyReLU(inplace=True))
+                layers.append(nn.LeakyReLU(inplace=False))
             elif activation_type == 'relu':
-                layers.append(nn.ReLU())
+                layers.append(nn.ReLU(inplace=False))
             elif activation_type == 'softsign':
                 layers.append(nn.Softsign())
             else:

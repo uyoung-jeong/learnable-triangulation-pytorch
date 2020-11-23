@@ -28,6 +28,7 @@ from tensorboardX import SummaryWriter
 
 from mvn.models.triangulation import RANSACTriangulationNet, AlgebraicTriangulationNet, VolumetricTriangulationNet
 from mvn.models.iknet import IKNet_Baseline
+from mvn.models.hmr import hmr_p2a
 from mvn.models.loss import KeypointsMSELoss, KeypointsMSESmoothLoss, KeypointsMAELoss, KeypointsL2Loss, VolumetricCELoss
 from mvn.models.loss import SMPLMAELoss
 
@@ -64,6 +65,7 @@ def parse_args():
 
     # training params
     parser.add_argument("--lr_decay", type=float, default=0.99, help='learning rate decay')
+    parser.add_argument("--model", type=str, default='iknet', choices=['iknet', 'hmr_p2a'])
 
     # iknet params
     parser.add_argument("--iknet_depth", type=int, default=6, help="number of layers in iknet model")
@@ -78,6 +80,8 @@ def parse_args():
     parser.add_argument('--batchnorm', type=int, default=1, help='1: apply batchnorm')
 
     args = parser.parse_args()
+
+    # post-processing args
     return args
 
 
@@ -194,11 +198,12 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
     results = defaultdict(list)
 
     # used to turn on/off gradients
-    grad_context = torch.autograd.enable_grad if is_train else torch.no_grad
+    #grad_context = torch.autograd.enable_grad if is_train else torch.no_grad
+    grad_context = torch.autograd.detect_anomaly if is_train else torch.no_grad
     with grad_context():
         end = time.time()
-
-        iterator = enumerate(tqdm(dataloader, desc=f'{name}, epoch:{epoch}'))
+        pbar = tqdm(dataloader, desc=f'{name}, epoch:{epoch}')
+        iterator = enumerate(pbar)
         """
         if is_train and config.opt.n_iters_per_epoch is not None:
             iterator = islice(iterator, config.opt.n_iters_per_epoch)
@@ -211,8 +216,10 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
 
         for iter_i, batch in iterator:
             with autograd.set_detect_anomaly(False): #autograd.detect_anomaly():
+                """
                 if is_train and iter_i > 5:
                     break
+                """
                 # measure data loading time
                 data_time = time.time() - end
 
@@ -234,12 +241,18 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                 if args.normalize_gt == 1:
                     norm_keypoints_3d_gt = torch.div(smpl_keypoints_3d_gt, denorm_keypoints) # allow negative input
 
+                    # subtract by base joint, following SPIN setup
+                    base_joint = norm_keypoints_3d_gt[:,6,:3]
+                    #norm_keypoints_3d_gt = norm_keypoints_3d_gt - base_joint[:,None,:]
+
                 pred_angle = model(norm_keypoints_3d_gt) # feed with normalized 3d keypoints
                 # pred_angle.shape: [5, 24, 4] # quaternion case
 
                 # convert from quaternions into rotation matrix
                 #pred_rotmats = torch.stack([quat2mat(quat) for quat in pred_quaternion])
-                if args.output_type == 'quaternion':
+                if args.model == 'hmr_p2a':
+                    pred_rotmats = pred_angle
+                elif args.output_type == 'quaternion':
                     pred_rotmats = torch.stack([quat_to_rotmat(q) for q in pred_angle])
                 elif args.output_type == '6d':
                     pred_rotmats = torch.stack([rot6d_to_rotmat(p) for p in pred_angle])
@@ -264,21 +277,20 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                 keypoints_3d_binary_validity_gt = (smpl_keypoints_validity > 0.0).type(torch.float32)
 
                 norm_keypoints_3d_pred = keypoints_3d_pred
-                if args.align_by_pelvis > 0: # subtract by the base joint
-                    # align by hips
-                    gt_pelvis = norm_keypoints_3d_gt[:, 0, :]
+                if args.align_by_pelvis > 0: # align by hips. Follow SPIN setup in keypoint_3d_loss
+                    gt_pelvis = torch.mean(norm_keypoints_3d_gt[:,2:4,:], axis=1) # pelvis per each batch idx
                     norm_keypoints_3d_gt = norm_keypoints_3d_gt - gt_pelvis[:,None,:]
 
-                    pred_pelvis = keypoints_3d_pred[:, 0, :]
-                    norm_keypoints_3d_pred = keypoints_3d_pred - pred_pelvis[:,None,:]
+                    pred_pelvis = torch.mean(keypoints_3d_pred[:,2:4,:], axis=1)
+                    norm_keypoints_3d_pred = norm_keypoints_3d_pred - pred_pelvis[:,None,:]
 
                 # calculate loss
                 total_loss = 0.0
 
                 # scale only on gt keypoints
-                loss = criterion(norm_keypoints_3d_pred, norm_keypoints_3d_gt, keypoints_3d_binary_validity_gt)
+                loss = 10 * criterion(norm_keypoints_3d_pred, norm_keypoints_3d_gt, keypoints_3d_binary_validity_gt)
                 #loss = criterion(keypoints_3d_pred*scale_keypoints_3d * denorm_keypoints, smpl_keypoints_3d_gt * scale_keypoints_3d, keypoints_3d_binary_validity_gt)
-                total_loss += loss
+                total_loss = loss
                 metric_dict[f'{config.opt.criterion}'].append(loss.item())
 
                 metric_dict['total_loss'].append(total_loss.item())
@@ -288,8 +300,8 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                     denorm_loss = loss * 2 * denorm_keypoints
                 metric_dict['denorm_loss'].append(denorm_loss.item())
 
-                if iter_i % (10 * config.vis_freq) == 0:
-                    print('epoch:{}, step:{}, {}:{:.6f}, total_loss:{:.6f}, denorm_loss:{:.6f}'.format(
+                if iter_i % (config.vis_freq) == 0:
+                    pbar.set_description('epoch:{}, step:{}, {}:{:.4f}, total_loss:{:.4f}, denorm_loss:{:.4f}'.format(
                                 epoch, iter_i, config.opt.criterion, metric_dict[f'{config.opt.criterion}'][-1], total_loss.item(), denorm_loss.item()))
 
                 if is_train:
@@ -439,7 +451,14 @@ def main(args):
     if args.checkpoint != '':
         config.model.checkpoint = args.checkpoint
 
-    model = IKNet_Baseline(args, config, device=device).to(device)
+    model = None
+    if args.model == 'iknet':
+        model = IKNet_Baseline(args, config, device=device).to(device)
+    elif args.model == 'hmr_p2a':
+        model = hmr_p2a(smpl_config.SMPL_MEAN_PARAMS, pretrained=True).to(device)
+    else:
+        print(f"ERROR: {args.model} is not a valid model")
+        exit(0)
     print(model)
 
     # load smpl model
