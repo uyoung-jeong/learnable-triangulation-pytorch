@@ -288,16 +288,16 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                 total_loss = 0.0
 
                 # scale only on gt keypoints
-                loss = 10 * criterion(norm_keypoints_3d_pred, norm_keypoints_3d_gt, keypoints_3d_binary_validity_gt)
+                loss = criterion(norm_keypoints_3d_pred, norm_keypoints_3d_gt, keypoints_3d_binary_validity_gt)
                 #loss = criterion(keypoints_3d_pred*scale_keypoints_3d * denorm_keypoints, smpl_keypoints_3d_gt * scale_keypoints_3d, keypoints_3d_binary_validity_gt)
-                total_loss = loss
+                total_loss = loss * 10
                 metric_dict[f'{config.opt.criterion}'].append(loss.item())
 
                 metric_dict['total_loss'].append(total_loss.item())
 
                 denorm_loss = loss
                 if args.normalize_gt == 1:
-                    denorm_loss = loss * 2 * denorm_keypoints
+                    denorm_loss = loss * denorm_keypoints
                 metric_dict['denorm_loss'].append(denorm_loss.item())
 
                 if iter_i % (config.vis_freq) == 0:
