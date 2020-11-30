@@ -65,7 +65,7 @@ def parse_args():
 
     # training params
     parser.add_argument("--lr_decay", type=float, default=0.99, help='learning rate decay')
-    parser.add_argument("--model", type=str, default='iknet', choices=['iknet', 'hmr_p2a'])
+    parser.add_argument("--model", type=str, default='hmr_p2a', choices=['iknet', 'hmr_p2a'])
 
     # iknet params
     parser.add_argument("--iknet_depth", type=int, default=6, help="number of layers in iknet model")
@@ -76,6 +76,7 @@ def parse_args():
     parser.add_argument('--norm_raw_theta', type=int, default=0, help='1: perform normalization using norm of theta_raw. 0: no normalization inside iknet')
     parser.add_argument('--denorm_scale', type=int, default=1000, help='keypoint denorm scale')
     parser.add_argument('--normalize_gt', type=int, default=1, help='1: normalize gt keypoints. assume that pred is normalized in same scale')
+    parser.add_argument('--subtract_base_joint', type=int, default=1, help='1: subtract gt keypoints by base joint. Need to add base joint during evaluation.')
     parser.add_argument('--align_by_pelvis', type=int, default=1, help='1: align gt and pred keypoints by pelvis when computing loss.')
     parser.add_argument('--batchnorm', type=int, default=1, help='1: apply batchnorm')
 
@@ -210,7 +211,6 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
         """
         scale_keypoints_3d = config.opt.scale_keypoints_3d if hasattr(config.opt, "scale_keypoints_3d") else 1.0
         #denorm_keypoints = config.opt.max_keypoints_3d if hasattr(config.opt, 'max_keypoints_3d') else 1.0 # used for denormalization
-        denorm_keypoints = args.denorm_scale
 
         keypoints_3d_binary_validity_gt = None
 
@@ -239,11 +239,13 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                 # nomalize input keypoints, following SPIN preprocessing steps
                 norm_keypoints_3d_gt = smpl_keypoints_3d_gt.clone()
                 if args.normalize_gt == 1:
-                    norm_keypoints_3d_gt = torch.div(smpl_keypoints_3d_gt, denorm_keypoints) # allow negative input
+                    norm_keypoints_3d_gt = torch.div(smpl_keypoints_3d_gt, args.denorm_scale) # allow negative input
 
+                base_joint = None
+                if args.subtract_base_joint == 1:
                     # subtract by base joint, following SPIN setup
                     base_joint = norm_keypoints_3d_gt[:,6,:3]
-                    #norm_keypoints_3d_gt = norm_keypoints_3d_gt - base_joint[:,None,:]
+                    norm_keypoints_3d_gt = norm_keypoints_3d_gt - base_joint[:,None,:]
 
                 pred_angle = model(norm_keypoints_3d_gt) # feed with normalized 3d keypoints
                 # pred_angle.shape: [5, 24, 4] # quaternion case
@@ -269,8 +271,14 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                 smpl_output = smpl(betas=dummy_betas.to(device), body_pose=pred_rotmats[:,1:], global_orient=pred_rotmats[:,0].unsqueeze(1), pose2rot=False)
                 #smpl_output = torch.stack([smpl(betas=dummy_betas.to(device), body_pose=mat[:,1:], global_orient=mat[:,0].unsqueeze(1), pose2rot=False) for mat in pred_rotmats])
                 keypoints_3d_pred = smpl_output.joints # [5, 49, 3]
-                denorm_keypoints_3d_pred = keypoints_3d_pred * args.denorm_scale if args.normalize_gt else keypoints_3d_pred
 
+                # denormalize prediction
+                denorm_keypoints_3d_pred = keypoints_3d_pred
+                if args.subtract_base_joint == 1:
+                    denorm_keypoints_3d_pred = denorm_keypoints_3d_pred + base_joint[:,None,:]
+
+                if args.normalize_gt == 1:
+                    denorm_keypoints_3d_pred = denorm_keypoints_3d_pred * args.denorm_scale
 
                 n_joints = keypoints_3d_pred.shape[1]
 
@@ -290,14 +298,15 @@ def one_epoch(model, smpl, criterion, opt, config, dataloader, device, epoch, n_
                 # scale only on gt keypoints
                 loss = criterion(norm_keypoints_3d_pred, norm_keypoints_3d_gt, keypoints_3d_binary_validity_gt)
                 #loss = criterion(keypoints_3d_pred*scale_keypoints_3d * denorm_keypoints, smpl_keypoints_3d_gt * scale_keypoints_3d, keypoints_3d_binary_validity_gt)
-                total_loss = loss * 10
+                loss_scale = 1.0 if not args.normalize_gt else args.denorm_scale
+                total_loss = loss * loss_scale # loss scaling
                 metric_dict[f'{config.opt.criterion}'].append(loss.item())
 
                 metric_dict['total_loss'].append(total_loss.item())
 
                 denorm_loss = loss
                 if args.normalize_gt == 1:
-                    denorm_loss = loss * denorm_keypoints
+                    denorm_loss = loss * args.denorm_scale
                 metric_dict['denorm_loss'].append(denorm_loss.item())
 
                 if iter_i % (config.vis_freq) == 0:
